@@ -23,23 +23,34 @@ class IntpDataset(Dataset):
         
         # load norm info
         with open(self.origin_path + f'Folds_Info/norm_{self.time_fold}.info', 'rb') as f:
+            # 从文件 file 中读取序列化数据，并将其反序列化为Python对象。
             self.dic_op_minmax, self.dic_op_meanstd = pickle.load(f)
             
         # Generate call_scene_list from 'divide_set_{self.time_fold}.info', then generate call_list from call_scene_list
         with open(self.origin_path + f'Folds_Info/divide_set_{self.time_fold}.info', 'rb') as f:
+            # 从文件 file 中读取序列化数据，并将其反序列化为Python对象。
             divide_set = pickle.load(f)
+
         if call_name == 'train':
             # for training set, call_list is same as call_scene_list, because call item will be chosen randomly
             call_scene_list = divide_set[0]
+
+            # debug mode
             if self.debug and len(call_scene_list) > 2000:
                 call_scene_list = call_scene_list[:2000]
+
+
             # do normalization in the parallel fashion
             self.total_df_dict = {}
             with concurrent.futures.ThreadPoolExecutor() as executor:
+                # return filename, df in the process_child function
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
                 for future in concurrent.futures.as_completed(futures):
                     file_name, file_content = future.result()
+                    # save the result in file_content
                     self.total_df_dict[file_name] = file_content
+
+                # ???
             self.call_list = []
             for scene in call_scene_list:
                 df = self.total_df_dict[scene]
@@ -47,11 +58,18 @@ class IntpDataset(Dataset):
                 for index in all_candidate.index.tolist():
                     for mask_buffer in range(51):
                         self.call_list.append([scene, index, mask_buffer])
+
+
+        # for test_set
         elif call_name == 'test':
             # for Early Stopping set, call_list is 3 label stations excluding holdout
             call_scene_list = divide_set[1]
+
+            # debug mode
             if self.debug and len(call_scene_list) > 1000:
                 call_scene_list = call_scene_list[:1000]
+
+
             # do normalization in the parallel fashion
             self.total_df_dict = {}
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -59,16 +77,22 @@ class IntpDataset(Dataset):
                 for future in concurrent.futures.as_completed(futures):
                     file_name, file_content = future.result()
                     self.total_df_dict[file_name] = file_content
+
+
             if 'Dataset_res250' in self.origin_path:
                 stations = [0, 1, 2, 3]
                 stations.remove(self.holdout)
+
             elif 'LUFT_res250' in self.origin_path:
                 label_stations = [0, 1, 2, 3, 4, 5]
                 stations = [x for x in label_stations if x not in self.holdout]
             self.call_list = []
+
             for scene in call_scene_list:
                 for station in stations:
                     self.call_list.append([scene, station])
+
+        # for eval_set
         elif call_name == 'eval':
             # for Final Evaluation set, call_list is holdout station
             call_scene_list = divide_set[1]
@@ -78,9 +102,12 @@ class IntpDataset(Dataset):
             self.total_df_dict = {}
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
+
+                # each time when a thread/process is done, it would be immediately return as future in the loop
                 for future in concurrent.futures.as_completed(futures):
                     file_name, file_content = future.result()
                     self.total_df_dict[file_name] = file_content
+
             self.call_list = []
             if 'Dataset_res250' in self.origin_path:
                 for scene in call_scene_list:
@@ -89,6 +116,8 @@ class IntpDataset(Dataset):
                 for scene in call_scene_list:
                     for station in self.holdout:
                         self.call_list.append([scene, station])
+
+
         elif call_name == 'train_self':
             # for training set, call_list is same as call_scene_list, because call item will be chosen randomly
             call_scene_list = divide_set[0]
@@ -125,7 +154,8 @@ class IntpDataset(Dataset):
         
     def __len__(self):
         return len(self.call_list)
-    
+
+    # task for each process/thread
     def process_child(self, filename):
         df = pd.read_csv(self.origin_path + 'Dataset_Separation/' + filename, sep=';')
         # drop everything in bad quality
@@ -134,7 +164,8 @@ class IntpDataset(Dataset):
         df = self.norm(d=df)
         
         return filename, df
-    
+
+    # normalize all values
     def norm(self, d):
         d_list = []
         for op in d['op'].unique():
@@ -157,7 +188,8 @@ class IntpDataset(Dataset):
         d1 = np.subtract.outer(obs[:,1], interp[:,1])
         # calculate hypotenuse
         return np.hypot(d0, d1)
-    
+
+    # (Inverse Distance Weighted)
     def idw_interpolation(self, x, y, values, xi, yi, p=2):
         dist = self.distance_matrix(x, y, xi,yi)
         # In IDW, weights are 1 / distance

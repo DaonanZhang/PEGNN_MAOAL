@@ -14,7 +14,13 @@ import time
 
 def length_to_mask(lengths, total_len, device):
     max_len = total_len
+    # torch.arange(max_len) 创建了一个从 0 到 max_len-1 的一维张量。
+    # .expand(lengths.shape[0], max_len) 扩展了这个一维张量，使其成为一个二维张量，其中的每一行都包含相同的整数序列。
+    # < lengths.unsqueeze(1) 使用逐元素小于比较，将这个二维张量与经过扩展的 lengths 张量进行比较。lengths.unsqueeze(1)
+    # 用于将 lengths 张量从一维扩展为二维，以便进行逐元素比较。
+    # 结果是一个形状为 (batch_size, max_len) 的二维布尔张量 mask，其中的每个元素表示相应位置上的值是否小于 lengths 中对应位置的值。
     mask = torch.arange(max_len).expand(lengths.shape[0], max_len).to(device) < lengths.unsqueeze(1)
+    # false->0, true->1
     mask = mask.int()
     return mask
 
@@ -252,11 +258,14 @@ class MultiLayerFeedForwardNN(nn.Module):
         
         output = input_tensor
         for layer in self.layers:
+            # ?
             output = layer(output)
 
         return output
 
 
+
+# 这个函数的作用是根据用户指定的初始化方式（"random" 或 "geometric"）生成一组频率值，并将其存储在 freq_list 中
 def _cal_freq_list(freq_init, frequency_num, max_radius, min_radius):
     freq_list = None
     if freq_init == "random":
@@ -268,6 +277,7 @@ def _cal_freq_list(freq_init, frequency_num, max_radius, min_radius):
     return freq_list
 
 
+# ******************************* Encoder ***********************************
 class GridCellSpatialRelationEncoder(nn.Module):
     """
     Given a list of (deltaX,deltaY), encode them using the position encoding function
