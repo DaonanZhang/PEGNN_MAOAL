@@ -34,7 +34,11 @@ def agent_wrapper(sweep_id, count):
 if __name__ == "__main__":
     # login to wandb
     wandb.login(key=myconfig.api_key)
-    
+
+    # start sweep
+    # "Wandb sweep" 是指 Weights & Biases（wandb）
+    # 平台提供的一种功能，用于进行超参数优化和实验调优。它允许你定义一个参数搜索空间，然后自动执行多次训练，并跟踪不同超参数组合的性能，以找到最佳的超参数配置。
+    #    - if new_run, then prepare working folders, generate & load sweep config, start sweep
     if myconfig.new_run:
         # prepare working folders
         # build_folder_and_clean('./wandb/')

@@ -5,6 +5,8 @@ import time
 import myconfig
 import subprocess
 
+# get result from slurm and sync to wandb
+
 
 def collect_slurm_id(path):
     files = os.listdir(path)

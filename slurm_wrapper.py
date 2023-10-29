@@ -7,6 +7,7 @@ import myconfig
 from datetime import datetime
 
 
+# Slurm（Simple Linux Utility for Resource Management）是一个用于高性能计算（HPC）和超级计算机集群管理的开源作业调度系统。
 # check echo from 'sacct' to tell the job status
 def check_status(status):
     rtn = 'RUNNING'
