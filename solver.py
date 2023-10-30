@@ -23,6 +23,8 @@ sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/util')
 import support_functions
 
 
+
+# where is the auxilary task and the loss from there?
 def bmc_loss(pred, target, noise_var, device):
     """Compute the Balanced MSE Loss (BMC) between `pred` and the ground truth `targets`.
     Args:
@@ -37,6 +39,7 @@ def bmc_loss(pred, target, noise_var, device):
     # loss = loss * (2 * noise_var).detach()  # optional: restore the loss scale, 'detach' when noise is learnable 
     return loss
 
+# lack of the file: support_functions.py !!
     
 def training(settings, job_id):
     support_functions.seed_everything(settings['seed'])
@@ -138,6 +141,7 @@ def training(settings, job_id):
 
         inter_loss += batch_loss.item()
         mini_loss += batch_loss.item()
+        # backward propagation
         batch_loss.backward()
 
         if (iter_counter+1) % settings['accumulation_steps'] == 0:
@@ -252,10 +256,22 @@ def training(settings, job_id):
     return list_total, list_err
 
 
+# to evaluate the result of training
 def evaluate(settings, job_id):
     support_functions.seed_everything(settings['seed'])
     
     # scan the correct coffer
+
+    # Fold（折叠）：
+    #
+    # "Fold" 通常指的是在交叉验证（Cross-Validation）中的一个子集数据。交叉验证是一种评估机器学习模型性能的方法，它将数据集分成若干个互不重叠的折叠（folds），然后依次使用这些折叠来训练和验证模型。
+    # 例如，5折交叉验证将数据集分成5个折叠，每次使用其中4个折叠来训练模型，然后使用剩下的1个折叠来验证模型。这个过程循环5次，每个折叠都曾被用作验证集。
+    # "Fold" 可以表示交叉验证中的一个数据子集，也可以表示折叠的数量。
+    # Holdout（保留集）：
+    # "Holdout" 是指从数据集中保留一部分数据，不用于训练模型，而是用于评估模型的性能。通常，将数据集划分为训练集（用于训练模型）和测试集（用于评估模型）。
+    # 在一些情况下，还可以进一步划分为训练集、验证集和测试集，其中验证集用于调整模型的超参数。
+    # "Holdout" 数据集的目的是模拟模型在未见过的数据上的性能，以便评估模型的泛化能力。
+
     fold = settings['fold']
     holdout = settings['holdout']
     lowest_rank = settings['lowest_rank']
@@ -319,6 +335,8 @@ def evaluate(settings, job_id):
         test_means_origin = output * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
         test_y_origin = target * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
 
+
+        # Mean Absolute Error
         mae = mean_squared_error(test_y_origin, test_means_origin, squared=False)
         r_squared = stats.pearsonr(test_y_origin, test_means_origin)
 

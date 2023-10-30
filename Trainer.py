@@ -11,6 +11,7 @@ sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/util')
 import support_functions
 
 
+# just the entry point for the training process, more details see in solver
 def train(job_id, settings):
     result_sheet = []
     list_total, list_err = solver.training(settings=settings, job_id=job_id)

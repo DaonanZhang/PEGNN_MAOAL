@@ -4,7 +4,7 @@ from torch_geometric.nn import GCNConv, knn_graph
 import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+# import torch.nn.functional as F
 from scipy import sparse
 import torch.nn.parallel
 import torch.utils.data
@@ -41,6 +41,7 @@ def extract_first_element_per_batch(tensor1, tensor2):
     unique_batch_indices = torch.unique(tensor2)
     # Initialize a list to store the first elements of each batch item
     first_elements = []
+
     # Iterate through each unique batch index
     for batch_idx in unique_batch_indices:
         # Find the first occurrence of the batch index in tensor2
@@ -59,6 +60,10 @@ class LayerNorm(nn.Module):
     Simple layer norm object optionally used with the convolutional encoder.
     """
 
+    # Batch_norm: same dimension, different features, different examples
+    # layer_norm: same features, same examples, different dim
+
+
     def __init__(self, feature_dim, eps=1e-6):
         super(LayerNorm, self).__init__()
         self.gamma = nn.Parameter(torch.ones((feature_dim,)))
@@ -69,6 +74,9 @@ class LayerNorm(nn.Module):
 
     def forward(self, x):
         # x: [batch_size, embed_dim]
+
+        # yes, it's layer normalization
+
         # normalize for each embedding
         mean = x.mean(-1, keepdim=True)
         std = x.std(-1, keepdim=True)
@@ -92,6 +100,7 @@ def get_activation_function(activation, context_str):
 
 
 class SingleFeedForwardNN(nn.Module):
+
     """
         Creates a single layer fully connected feed forward neural network.
         this will use non-linearity, layer normalization, dropout
@@ -258,7 +267,7 @@ class MultiLayerFeedForwardNN(nn.Module):
         
         output = input_tensor
         for layer in self.layers:
-            # ?
+            # applied in each layer
             output = layer(output)
 
         return output
@@ -266,6 +275,8 @@ class MultiLayerFeedForwardNN(nn.Module):
 
 
 # 这个函数的作用是根据用户指定的初始化方式（"random" 或 "geometric"）生成一组频率值，并将其存储在 freq_list 中
+# 3.2 in the paper: PE(c,tau_min,tau_max, seta_pe) = NN(ST(c,tau_min,tau_max), seta_pe)
+# for context-aware spatial coordinaate embedding
 def _cal_freq_list(freq_init, frequency_num, max_radius, min_radius):
     freq_list = None
     if freq_init == "random":
@@ -278,6 +289,8 @@ def _cal_freq_list(freq_init, frequency_num, max_radius, min_radius):
 
 
 # ******************************* Encoder ***********************************
+# enhance the spatial relation encoder from nn.module? but why only nn.module?
+# Is this so inteligent? ..
 class GridCellSpatialRelationEncoder(nn.Module):
     """
     Given a list of (deltaX,deltaY), encode them using the position encoding function
@@ -320,9 +333,12 @@ class GridCellSpatialRelationEncoder(nn.Module):
 
     def cal_freq_mat(self):
         # freq_mat shape: (frequency_num, 1)
+        # torch.unsqueeze(self.freq_list, 1) 是将self.freq_list的维度进行扩展的操作。
+        # 具体地说，它将self.freq_list中的数据保持不变，并在第一个维度（维度索引为0）之前插入一个新的维度，该新维度的大小为1。
         freq_mat = torch.unsqueeze(self.freq_list, 1)
         # self.freq_mat shape: (frequency_num, 2)
         self.freq_mat = freq_mat.repeat(1, 2)
+
 
     def make_input_embeds(self, coords):
         # coords: shape (batch_size, num_context_pt, 2)
@@ -343,6 +359,9 @@ class GridCellSpatialRelationEncoder(nn.Module):
         return spr_embeds
 
     def forward(self, coords):
+
+        # embedding function
+
         """
         Given a list of coords (deltaX, deltaY), give their spatial relation embedding
         Args:
@@ -351,6 +370,8 @@ class GridCellSpatialRelationEncoder(nn.Module):
             sprenc: Tensor shape (batch_size, num_context_pt, spa_embed_dim)
         """
         spr_embeds = self.make_input_embeds(coords)
+
+        # Feed Forward Network
         if self.ffn is not None:
             return self.ffn(spr_embeds)
         else:
@@ -358,6 +379,9 @@ class GridCellSpatialRelationEncoder(nn.Module):
 
 
 class PEGCN(nn.Module):
+
+    # Hole right part of PEGCN consider the figure 1 in the paper: GCNCONV layers?
+
     """
         GCN with positional encoder and auxiliary tasks
     """
@@ -369,9 +393,13 @@ class PEGCN(nn.Module):
         self.emb_hidden_dim = emb_hidden_dim
         self.emb_dim = emb_dim
         self.k = k
+
+        # an instance of the encoder:GridcellsSpatialRelationEncoder
         self.spenc = GridCellSpatialRelationEncoder(
             spa_embed_dim=emb_hidden_dim, ffn=True, min_radius=1e-06, max_radius=360
         )
+
+        # decrease the dimension of the embedding
         self.dec = nn.Sequential(
             nn.Linear(emb_hidden_dim, emb_hidden_dim // 2),
             nn.Tanh(),
@@ -379,8 +407,11 @@ class PEGCN(nn.Module):
             nn.Tanh(),
             nn.Linear(emb_hidden_dim // 4, emb_dim)
         )
+
+
         self.conv1 = GCNConv(num_features_in + emb_dim, conv_dim)
         self.conv2 = GCNConv(conv_dim, conv_dim)
+        # fully connected layer
         self.fc = nn.Linear(conv_dim, num_features_out)
         
         self.noise_sigma = torch.nn.Parameter(torch.tensor([0.1, ], device=self.device))
@@ -388,6 +419,9 @@ class PEGCN(nn.Module):
         # init weights
         for p in self.dec.parameters():
             if p.dim() > 1:
+                # torch.nn.init.kaiming_normal_ 使用Kaiming初始化方法，
+                # 该方法是一种针对ReLU（修正线性单元）激活函数设计的初始化策略。
+                # 它的目标是使权重初始化在训练初始阶段产生的梯度方差接近于1，以防止梯度爆炸或梯度消失问题。
                 torch.nn.init.kaiming_normal_(p)
         for p in self.conv1.parameters():
             if p.dim() > 1:
@@ -399,11 +433,14 @@ class PEGCN(nn.Module):
 
     def forward(self, inputs, targets, coords, input_lenths, head_only):
         # start_time = time.time()
+        # encoding
         emb = self.spenc(coords)
         # spenc_time = time.time()
+        # decrease the dimension of the embedding to the emb_dim
         emb = self.dec(emb)
         # dec_time = time.time()
-        
+
+        # why should there a transformation between padded_seq_to_vectors?
         emb_l, indexer = padded_seq_to_vectors(emb, input_lenths)
         x_l, _ = padded_seq_to_vectors(inputs, input_lenths)
         if self.num_features_in == 2:
@@ -412,12 +449,15 @@ class PEGCN(nn.Module):
             x_l = torch.cat([first_element, last_element], dim=-1)
         y_l, _ = padded_seq_to_vectors(targets, input_lenths)
         c_l, _ = padded_seq_to_vectors(coords, input_lenths)
+
+
         # ptv_time = time.time()
         
         edge_index = knn_graph(c_l, k=self.k, batch=indexer)
         edge_weight = makeEdgeWeight(c_l, edge_index).to(self.device)
         # edge_time = time.time()
 
+        # concat the embedding with the input
         x = torch.cat((x_l, emb_l), dim=1)
         h1 = F.relu(self.conv1(x, edge_index, edge_weight))
         h1 = F.dropout(h1, training=self.training)
@@ -427,14 +467,17 @@ class PEGCN(nn.Module):
         # CNN_time = time.time()
         
         # print(f'spenc: {spenc_time-start_time}, dec: {dec_time-spenc_time}, ptv: {ptv_time-dec_time}, edge: {edge_time-ptv_time}, CNN: {CNN_time-edge_time}')
-        
+
+
+        # the result of output and y_l, in order to compare the BMC bzw. lost function
         if not head_only:
             return output, y_l
         else:
             output_head = extract_first_element_per_batch(output, indexer)
             target_head = extract_first_element_per_batch(y_l, indexer)
             return output_head, target_head
-        
+
+    #     calculate the loss
     def bmc_loss(self, pred, target):
         """Compute the Balanced MSE Loss (BMC) between `pred` and the ground truth `targets`.
         Args:
