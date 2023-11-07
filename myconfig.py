@@ -1,4 +1,5 @@
 # wandb api key
+# §§
 api_key = '50d21c78c93763fe3ab0c50a896d798f9a8e7d0a'
 
 # is it a new run or continue
@@ -13,6 +14,7 @@ log_path = './logs/'
 coffer_path = './coffer/'
 
 # entity name (your wandb account name)
+# §§
 entity_name = 'chaofan'
 # project name on wandb and HPC
 project_name = 'PEGNN_sweep_ber'

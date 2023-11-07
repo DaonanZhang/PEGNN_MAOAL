@@ -54,5 +54,6 @@ if __name__ == "__main__":
         wandb.agent(sweep_id=sweep_id, count=myconfig.total_sweep)
     else:
         sweep_id = myconfig.sweep_id
+        # direcutoray
         wandb.agent(sweep_id=sweep_id, entity=myconfig.entity_name, project=myconfig.project_name, count=myconfig.total_sweep)
     

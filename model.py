@@ -12,6 +12,7 @@ from spatial_utils import *
 import time
 
 
+# no usage?
 def length_to_mask(lengths, total_len, device):
     max_len = total_len
     # torch.arange(max_len) 创建了一个从 0 到 max_len-1 的一维张量。
@@ -275,8 +276,10 @@ class MultiLayerFeedForwardNN(nn.Module):
 
 
 # 这个函数的作用是根据用户指定的初始化方式（"random" 或 "geometric"）生成一组频率值，并将其存储在 freq_list 中
-# 3.2 in the paper: PE(c,tau_min,tau_max, seta_pe) = NN(ST(c,tau_min,tau_max), seta_pe)
-# for context-aware spatial coordinaate embedding
+# 3.2 in the paper: PE(c,tau_min,tau_max, seta_pe) = NN(ST(c,tau_min,tau_max), seta_pe)?
+
+# why in this form, not in the form of cos(C_v / (tau_min * g ** (s/(s-1)))) and sin (C_v / (tau_min * g ** (s/(s-1))))?
+# for context-aware spatial coordinaate embedding?
 def _cal_freq_list(freq_init, frequency_num, max_radius, min_radius):
     freq_list = None
     if freq_init == "random":

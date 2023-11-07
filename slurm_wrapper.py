@@ -35,7 +35,8 @@ def wrap_task(config=None):
         agent_id = wandb.run.id
         agent_dir = wandb.run.dir
         config = dict(wandb.config)
-        
+
+        # §§ DB folder
         config['origin_path'] = '../Datasets/LUFT_res250/'
         config['debug'] = False
         config['bp'] = False
@@ -59,6 +60,7 @@ def wrap_task(config=None):
         config['lowest_rank'] = 1
         
         # wait until available pipe slot
+        # §§ slurm command: squeue
         while True:
             cmd = f"squeue -n {myconfig.project_name}"
             status = subprocess.check_output(cmd, shell=True).decode()
@@ -88,6 +90,8 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{myconfig.conda_env}/lib
 job_id=$SLURM_JOB_ID
 python {myconfig.train_script_name} $job_id '{json.dumps(config)}' {agent_id} {agent_dir}
 """
+
+        # wandb config agent id agent dir
         
         # Write job submission script to a file
         with open(myconfig.slurm_scripts_path + f"{wandb.run.id}.sbatch", "w") as f:
