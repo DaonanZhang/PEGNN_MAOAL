@@ -1,6 +1,8 @@
 # wandb api key
 # §§
-api_key = '50d21c78c93763fe3ab0c50a896d798f9a8e7d0a'
+# api_key = '50d21c78c93763fe3ab0c50a896d798f9a8e7d0a'
+
+api_key = '8407bdbf6e108552607bce672dbb7c285ce4b172'
 
 # is it a new run or continue
 new_run = False
@@ -15,15 +17,25 @@ coffer_path = './coffer/'
 
 # entity name (your wandb account name)
 # §§
-entity_name = 'chaofan'
+# entity_name = 'chaofan'
+
+entity_name = 'daonan_'
+
 # project name on wandb and HPC
 project_name = 'PEGNN_sweep_ber'
 # e-mail address to recieve notifications
-e_mail = 'hpcdam.lcf@gmail.com'
+# e_mail = 'hpcdam.lcf@gmail.com'
+
+e_mail = 'uqqww@student.kit.edu'
+
 # conda location
-conda_env = '/home/kit/tm/lm6999/miniconda3/envs/new_env'
+# conda_env = '/home/kit/tm/lm6999/miniconda3/envs/new_env'
+
+conda_env = 'C:\\Users\\34959\\anaconda3\\envs\\ml\\python.exe'
+
 # file name of the slurm_wrapper, don't change this if you haven't write a new one
 slurm_wrapper_name = './slurm_wrapper.py'
+
 # file name of the training code
 train_script_name = './Trainer.py'
 

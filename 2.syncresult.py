@@ -7,6 +7,7 @@ import subprocess
 
 # get result from slurm and sync to wandb
 
+# don't use this class for now
 
 def collect_slurm_id(path):
     files = os.listdir(path)
@@ -48,6 +49,8 @@ if __name__ == "__main__":
         run_id = folder.split('-')[-1]
         output_folder = wandb_path + folder + '/files/'
         rtn_file, slurm_id = collect_slurm_id(output_folder)
+
+
         if rtn_file == 'empty':
             if not processing:
                 subprocess.run(["rm", "-rf", f"{folder}"]) 

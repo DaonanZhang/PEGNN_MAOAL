@@ -31,6 +31,8 @@ def train(job_id, settings):
 
 
 if __name__ == '__main__':
+
+    # 主函数入口
     job_id = sys.argv[1]
     config = json.loads(sys.argv[2])
     agent_id = sys.argv[3]
@@ -42,7 +44,7 @@ if __name__ == '__main__':
     }
     
     settings.update(config)
-    
+
     # build working folder
     dt_string = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     coffer_slot = myconfig.coffer_path + str(job_id) + '-' + dt_string + '/'
