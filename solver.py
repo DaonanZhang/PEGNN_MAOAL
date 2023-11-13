@@ -3,7 +3,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import sys
+
+# in the slurm file
 sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/Datasets')
+
+
 import Dataloader_PEGNN as dl
 from model import *
 import torch.optim as optim
@@ -19,7 +23,10 @@ from torch.optim.lr_scheduler import LambdaLR
 import random
 
 import sys
+
+# in the slurm file
 sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/util')
+
 import support_functions
 
 
@@ -121,6 +128,8 @@ def training(settings, job_id):
     data_iter = iter(dataloader_tr)
     
     t_train_iter_start = time.time()
+
+
     while True:
         # train 1 iteration
         model.train()
@@ -193,6 +202,7 @@ def training(settings, job_id):
             inter_loss = 0
 
             title = f'Fold{fold}_holdout{holdout}_Md_all: MSE {round(mae, 2)} R2 {round(r_squared[0], 2)}'
+
             support_functions.save_square_img(
                 contents=[test_y_origin.numpy(), test_means_origin.numpy()], 
                 xlabel='targets_ex', ylabel='output_ex', 
@@ -266,6 +276,7 @@ def evaluate(settings, job_id):
     #
     # "Fold" 通常指的是在交叉验证（Cross-Validation）中的一个子集数据。交叉验证是一种评估机器学习模型性能的方法，它将数据集分成若干个互不重叠的折叠（folds），然后依次使用这些折叠来训练和验证模型。
     # 例如，5折交叉验证将数据集分成5个折叠，每次使用其中4个折叠来训练模型，然后使用剩下的1个折叠来验证模型。这个过程循环5次，每个折叠都曾被用作验证集。
+
     # "Fold" 可以表示交叉验证中的一个数据子集，也可以表示折叠的数量。
     # Holdout（保留集）：
     # "Holdout" 是指从数据集中保留一部分数据，不用于训练模型，而是用于评估模型的性能。通常，将数据集划分为训练集（用于训练模型）和测试集（用于评估模型）。

@@ -15,8 +15,6 @@ class IntpDataset(Dataset):
         # save init parameters
         self.origin_path = settings['origin_path']
         self.time_fold = settings['fold']
-
-        # what's the meaning of holdout?
         self.holdout = settings['holdout']
 
         # what's the mask_distance?
@@ -26,7 +24,9 @@ class IntpDataset(Dataset):
         self.lowest_rank = settings['lowest_rank']
         self.call_name = call_name
         self.debug = settings['debug']
-        
+
+        # the dataset is not in this form???
+
         # load norm info
         with open(self.origin_path + f'Folds_Info/norm_{self.time_fold}.info', 'rb') as f:
             # 从文件 file 中读取序列化数据，并将其反序列化为Python对象。
@@ -34,7 +34,6 @@ class IntpDataset(Dataset):
             
         # Generate call_scene_list from 'divide_set_{self.time_fold}.info', then generate call_list from call_scene_list
         with open(self.origin_path + f'Folds_Info/divide_set_{self.time_fold}.info', 'rb') as f:
-            # 从文件 file 中读取序列化数据，并将其反序列化为Python对象。
             divide_set = pickle.load(f)
 
         if call_name == 'train':
@@ -57,13 +56,12 @@ class IntpDataset(Dataset):
                     # save the result in file_content
                     self.total_df_dict[file_name] = file_content
 
-                # ???
             self.call_list = []
             for scene in call_scene_list:
+                # df = accordingly scene DataFrame
                 df = self.total_df_dict[scene]
                 all_candidate = df[df['op']=='mcpm10']
                 for index in all_candidate.index.tolist():
-
                     # what the mask here means? and how to use it?
                     for mask_buffer in range(51):
                         self.call_list.append([scene, index, mask_buffer])
@@ -88,21 +86,21 @@ class IntpDataset(Dataset):
                     file_name, file_content = future.result()
                     self.total_df_dict[file_name] = file_content
 
+            # added
+            self.stations = []
 
             if 'Dataset_res250' in self.origin_path:
-                stations = [0, 1, 2, 3]
+                self.stations = [0, 1, 2, 3]
                 # remove holdout station
-                # what holdout stand for?
-                stations.remove(self.holdout)
+                self.stations.remove(self.holdout)
 
             elif 'LUFT_res250' in self.origin_path:
                 label_stations = [0, 1, 2, 3, 4, 5]
-                stations = [x for x in label_stations if x not in self.holdout]
+                self.stations = [x for x in label_stations if x not in self.holdout]
             self.call_list = []
 
-            # ????
             for scene in call_scene_list:
-                for station in stations:
+                for station in self.stations:
                     self.call_list.append([scene, station])
 
         # for eval_set
@@ -111,6 +109,7 @@ class IntpDataset(Dataset):
             call_scene_list = divide_set[1]
             if self.debug and len(call_scene_list) > 1000:
                 call_scene_list = call_scene_list[:1000]
+
             # do normalization in the parallel fashion
             self.total_df_dict = {}
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -137,6 +136,7 @@ class IntpDataset(Dataset):
             call_scene_list = divide_set[0]
             if self.debug and len(call_scene_list) > 2000:
                 call_scene_list = call_scene_list[:2000]
+
             # do normalization in the parallel fashion
             self.total_df_dict = {}
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -145,7 +145,7 @@ class IntpDataset(Dataset):
                     file_name, file_content = future.result()
                     self.total_df_dict[file_name] = file_content
 
-            #get random call_item from 'mcpm10'
+            # get random call_item from 'mcpm10'
             # which is also in the paper of PEGNN SO CALLED SHUFFLED MORAN's I
             self.call_list = []
             for scene in call_scene_list:
@@ -156,8 +156,9 @@ class IntpDataset(Dataset):
         print(len(self.total_df_dict.keys()))
         
         # process the land-use tif
-        # land-use?????
         # TIFF（Tagged Image File Format）是一种常见的图像文件格式，用于存储位图图像和矢量图像。
+
+        # but only have CWSL_resampled.tif in the dataset???
         geo_file = gdal.Open(self.origin_path + 'CWSL_norm.tif')
         tif_channel_list = []
         for i in range(geo_file.RasterCount):
@@ -180,6 +181,7 @@ class IntpDataset(Dataset):
     def process_child(self, filename):
         df = pd.read_csv(self.origin_path + 'Dataset_Separation/' + filename, sep=';')
         # drop everything in bad quality
+        # loweset_rank = quality level of the sensor
         df = df[df['Thing']>=self.lowest_rank]
         # normalize all values (coordinates will be normalized later)
         df = self.norm(d=df)
@@ -192,11 +194,12 @@ class IntpDataset(Dataset):
         for op in d['op'].unique():
             d_op = d.loc[d['op']==op].copy(deep=True)
             if op in ['s_label_0', 's_label_1', 's_label_2', 's_label_3', 's_label_4', 's_label_5', 's_label_6', 'p_label']:
+                # what does s_label and p_label in the dataset mean?
                 op_norm = 'mcpm10'
             else:
                 op_norm = op
 
-
+            # do the normalization
             if op_norm in self.dic_op_minmax.keys():
                 d_op['Result_norm'] = (d_op['Result'] - self.dic_op_minmax[op_norm][0]) / (self.dic_op_minmax[op_norm][1] - self.dic_op_minmax[op_norm][0])
             elif op_norm in self.dic_op_meanstd.keys():
@@ -228,7 +231,9 @@ class IntpDataset(Dataset):
         return np.dot(weights.T, values)
 
 
-    # still have questions?
+    # 它允许对象使用索引操作符（方括号表示法）来访问其元素。
+    # 在深度学习或机器学习的上下文中，特别是在使用PyTorch这样的框架时，__getitem__通常被用于定义如何从数据集中加载和返回单个样本。
+    # 这是DataLoader工作流程的一个关键部分。以下是__getitem__方法在数据加载器中的典型用法：
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
@@ -242,16 +247,16 @@ class IntpDataset(Dataset):
 
             # df is a directory of all dataframes
             df = self.total_df_dict[scene]
-            #     - get a random call_item, those remianed are story
+            #     - get a random call_item, those remained are story
             all_candidate = df[df['op']=='mcpm10']
 
+
+            # shuffled Moran's I
             # only get random set for training set
             random_row = all_candidate.loc[random_index]
             call_item = pd.DataFrame([random_row], index=[random_index])
             remaining_candidate = all_candidate.drop(random_index)
 
-
-            # what's the meaning of this code? and what's the meaning of mcpm10?
             rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
             df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
             

@@ -2,6 +2,9 @@ import os
 import sys
 import json
 import time
+
+import wandb
+
 import myconfig
 import solver as solver
 from datetime import datetime
@@ -33,11 +36,53 @@ def train(job_id, settings):
 if __name__ == '__main__':
 
     # 主函数入口
-    job_id = sys.argv[1]
-    config = json.loads(sys.argv[2])
-    agent_id = sys.argv[3]
-    agent_dir = sys.argv[4]
-    
+
+
+    # @@@@
+    # job_id = sys.argv[1]
+    # config = json.loads(sys.argv[2])
+    # agent_id = sys.argv[3]
+    # agent_dir = sys.argv[4]
+
+    job_id = 'only_for_test'
+    with wandb.init(config=None):
+        agent_id = wandb.run.id
+        agent_dir = wandb.run.dir
+        config = dict(wandb.config)
+
+        # §§ DB folder
+        # config['origin_path'] = '../Datasets/LUFT_res250/'
+        config['origin_path'] = '../Dataset_res250/'
+
+        config['debug'] = False
+        config['bp'] = False
+
+        config['batch'] = 64
+        # §§
+        # can't load config['full_batch'] lr and so on, nor if i run the new start first, what should i do then
+        # §§
+        config['accumulation_steps'] = 128 // 64
+        config['epoch'] = 10000
+        config['test_batch'] = 50
+        # §§
+        config['nn_lr'] = 0.01
+        config['es_mindelta'] = 0.5
+        config['es_endure'] = 30
+
+        config['num_features_in'] = 10
+        config['num_features_out'] = 1
+        # §§
+        config['emb_hidden_dim'] = 64 * 4
+
+        config['seed'] = 1
+        config['model'] = 'PEGNN'
+        config['fold'] = 0
+        config['holdout'] = [0, 1]
+        config['lowest_rank'] = 1
+
+        # can't find config['full_batch'] where should it comes from
+        print("--------------" + config['full_batch'] + "------------------")
+
     settings = {
         'agent_id': agent_id,
         'agent_dir': agent_dir,

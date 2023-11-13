@@ -7,7 +7,6 @@ import myconfig
 from datetime import datetime
 
 
-# Slurm（Simple Linux Utility for Resource Management）是一个用于高性能计算（HPC）和超级计算机集群管理的开源作业调度系统。
 # check echo from 'sacct' to tell the job status
 def check_status(status):
     rtn = 'RUNNING'
@@ -37,7 +36,9 @@ def wrap_task(config=None):
         config = dict(wandb.config)
 
         # §§ DB folder
-        config['origin_path'] = '../Datasets/LUFT_res250/'
+        # config['origin_path'] = '../Datasets/LUFT_res250/'
+        config['origin_path'] = '../Dataset_res250/'
+
         config['debug'] = False
         config['bp'] = False
         
@@ -55,11 +56,13 @@ def wrap_task(config=None):
         
         config['seed'] = 1
         config['model'] = 'PEGNN'
+
         config['fold'] = 0
         config['holdout'] = [0, 1]
         config['lowest_rank'] = 1
         
         # wait until available pipe slot
+
         # §§ slurm command: squeue
         while True:
             cmd = f"squeue -n {myconfig.project_name}"
@@ -69,7 +72,8 @@ def wrap_task(config=None):
                 break
             else:
                 time.sleep(60)
-        
+
+
         # then build up the slurm script
         job_script = \
 f"""#!/bin/bash
@@ -90,6 +94,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{myconfig.conda_env}/lib
 job_id=$SLURM_JOB_ID
 python {myconfig.train_script_name} $job_id '{json.dumps(config)}' {agent_id} {agent_dir}
 """
+
 
         # wandb config agent id agent dir
         

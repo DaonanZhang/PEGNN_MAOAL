@@ -6,7 +6,13 @@ api_key = '8407bdbf6e108552607bce672dbb7c285ce4b172'
 
 # is it a new run or continue
 new_run = False
-sweep_id = 'h8lygcm6'
+
+# sweep id still required
+# currently not used, used for sweep in wandb
+# §§
+# sweep_id = 'h8lygcm6'
+sweep_id = '8fdva0hb'
+
 
 # where should the intermedia generated scripts be saved (automatically cleaned at the start of each run)
 slurm_scripts_path = './slurm_scripts/'
@@ -31,7 +37,7 @@ e_mail = 'uqqww@student.kit.edu'
 # conda location
 # conda_env = '/home/kit/tm/lm6999/miniconda3/envs/new_env'
 
-conda_env = 'C:\\Users\\34959\\anaconda3\\envs\\ml\\python.exe'
+conda_env = 'C:\\Users\\34959\\anaconda3\\envs\\ml'
 
 # file name of the slurm_wrapper, don't change this if you haven't write a new one
 slurm_wrapper_name = './slurm_wrapper.py'
