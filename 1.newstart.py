@@ -50,6 +50,7 @@ if __name__ == "__main__":
 
         # start sweep
         sweep_id = wandb.sweep(sweep=config_dict)
+        # generate a sweep agent
         wandb.agent(sweep_id=sweep_id, count=myconfig.total_sweep)
     else:
 

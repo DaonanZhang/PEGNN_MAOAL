@@ -50,8 +50,11 @@ if __name__ == '__main__':
         agent_dir = wandb.run.dir
         config = dict(wandb.config)
 
+        print(config)
+
         # §§ DB folder
         # config['origin_path'] = '../Datasets/LUFT_res250/'
+        # should there be other dataset?
         config['origin_path'] = '../Dataset_res250/'
 
         config['debug'] = False
@@ -80,8 +83,6 @@ if __name__ == '__main__':
         config['holdout'] = [0, 1]
         config['lowest_rank'] = 1
 
-        # can't find config['full_batch'] where should it comes from
-        print("--------------" + config['full_batch'] + "------------------")
 
     settings = {
         'agent_id': agent_id,

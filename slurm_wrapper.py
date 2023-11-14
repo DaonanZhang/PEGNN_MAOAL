@@ -30,6 +30,7 @@ def check_status(status):
 
 def wrap_task(config=None):
     # recieve config for this run from Sweep Controller
+
     with wandb.init(config=config):
         agent_id = wandb.run.id
         agent_dir = wandb.run.dir

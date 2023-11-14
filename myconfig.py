@@ -5,13 +5,13 @@
 api_key = '8407bdbf6e108552607bce672dbb7c285ce4b172'
 
 # is it a new run or continue
-new_run = False
+new_run = True
 
 # sweep id still required
 # currently not used, used for sweep in wandb
 # §§
 # sweep_id = 'h8lygcm6'
-sweep_id = '8fdva0hb'
+sweep_id = ''
 
 
 # where should the intermedia generated scripts be saved (automatically cleaned at the start of each run)

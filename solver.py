@@ -74,7 +74,8 @@ def training(settings, job_id):
             print(f'Working on multi-GPU {device_list}')
         else:
             print(f'Working on single-GPU')
-            
+
+    # no such folder?
     # get standarization restore info
     with open(settings['origin_path'] + f'Folds_Info/norm_{fold}.info', 'rb') as f:
         dic_op_minmax, dic_op_meanstd = pickle.load(f)

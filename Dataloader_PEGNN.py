@@ -26,7 +26,6 @@ class IntpDataset(Dataset):
         self.debug = settings['debug']
 
         # the dataset is not in this form???
-
         # load norm info
         with open(self.origin_path + f'Folds_Info/norm_{self.time_fold}.info', 'rb') as f:
             # 从文件 file 中读取序列化数据，并将其反序列化为Python对象。
