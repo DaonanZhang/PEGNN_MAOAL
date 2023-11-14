@@ -17,7 +17,7 @@ class IntpDataset(Dataset):
         self.time_fold = settings['fold']
         self.holdout = settings['holdout']
 
-        # what's the mask_distance?
+
         self.mask_distance = mask_distance
 
         # set lowest_rank in order to generate the k-nearest neighbors?

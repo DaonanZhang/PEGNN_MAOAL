@@ -37,8 +37,8 @@ def wrap_task(config=None):
         config = dict(wandb.config)
 
         # §§ DB folder
-        # config['origin_path'] = '../Datasets/LUFT_res250/'
-        config['origin_path'] = '../Dataset_res250/'
+        # config['origin_path'] = '../Dataset_res250/'
+        config['origin_path'] = 'Dataset_res250/'
 
         config['debug'] = False
         config['bp'] = False
@@ -97,16 +97,45 @@ python {myconfig.train_script_name} $job_id '{json.dumps(config)}' {agent_id} {a
 """
 
 
+        # §§ cmd for windows
+        # only for test
+        # job_id = 'test'
+        #
+        # job_script = f"""
+        # @echo off
+        # cd Desktop
+        # cd PEGNN
+        # conda activate ml
+        # set job_id={job_id}
+        # set config={json.dumps(config)}
+        # set agent_id={agent_id}
+        # set agent_dir={agent_dir}
+        # python {myconfig.train_script_name} %job_id% %config% %agent_id% %agent_dir%
+        # """
+
         # wandb config agent id agent dir
         
         # Write job submission script to a file
+        # change to windows cmd
         with open(myconfig.slurm_scripts_path + f"{wandb.run.id}.sbatch", "w") as f:
             f.write(job_script)
+        # with open(myconfig.slurm_scripts_path + f"{wandb.run.id}.cmd", "w") as f:
+        #     f.write(job_script)
         
         # Submit job to Slurm system and get job ID
+
+        # change script to windows cmd
         cmd = "sbatch " + myconfig.slurm_scripts_path + f"{wandb.run.id}.sbatch"
+        # cmd = myconfig.slurm_scripts_path + f"{wandb.run.id}.cmd"
+
+        # change to windows cmd
         output = subprocess.check_output(cmd, shell=True).decode().strip()
+        # subprocess.run(cmd , shell=True)
+
+        # close for now
         job_id = output.split()[-1]
+
+
         wandb.log({
             "job_id" : job_id,
         })

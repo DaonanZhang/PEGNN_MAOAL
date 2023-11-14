@@ -1,0 +1,33 @@
+method: random
+metric:
+  goal: minimize
+  name: best_err
+name: offline-sweep
+parameters:
+  conv_dim:
+    values:
+    - 128
+    - 256
+    - 512
+  emb_dim:
+    values:
+    - 16
+    - 32
+    - 64
+  full_batch:
+    values:
+    - 128
+    - 256
+    - 512
+  k:
+    values:
+    - 5
+    - 10
+    - 20
+  lr:
+    values:
+    - 0.001
+    - 0.0001
+    - 1.0e-05
+program: ./slurm_wrapper.py
+project: PEGNN_sweep_ber
