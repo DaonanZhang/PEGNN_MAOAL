@@ -18,6 +18,9 @@ class IntpDataset(Dataset):
         self.holdout = settings['holdout']
 
 
+        # only in windows to control the thread number
+        self.thread_num = 8
+
         self.mask_distance = mask_distance
 
         # set lowest_rank in order to generate the k-nearest neighbors?
@@ -25,15 +28,19 @@ class IntpDataset(Dataset):
         self.call_name = call_name
         self.debug = settings['debug']
 
-        # the dataset is not in this form???
-        # load norm info
+        # load norm info, std, mean
         with open(self.origin_path + f'Folds_Info/norm_{self.time_fold}.info', 'rb') as f:
-            # 从文件 file 中读取序列化数据，并将其反序列化为Python对象。
             self.dic_op_minmax, self.dic_op_meanstd = pickle.load(f)
-            
+
         # Generate call_scene_list from 'divide_set_{self.time_fold}.info', then generate call_list from call_scene_list
         with open(self.origin_path + f'Folds_Info/divide_set_{self.time_fold}.info', 'rb') as f:
             divide_set = pickle.load(f)
+
+        # print("***********  divide_set ******************")
+        # # debug mode
+        # print(divide_set[1][0])
+        # print("***********  divide_set ******************")
+
 
         if call_name == 'train':
             # for training set, call_list is same as call_scene_list, because call item will be chosen randomly
@@ -47,7 +54,7 @@ class IntpDataset(Dataset):
             # do normalization in the parallel fashion
             # drop bad quality and normalize
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
                 # return filename, df in the process_child function
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
                 for future in concurrent.futures.as_completed(futures):
@@ -72,6 +79,7 @@ class IntpDataset(Dataset):
             # divide_set[0] is train set, divide_set[1] is test set
             call_scene_list = divide_set[1]
 
+
             # debug mode
             if self.debug and len(call_scene_list) > 1000:
                 call_scene_list = call_scene_list[:1000]
@@ -79,7 +87,7 @@ class IntpDataset(Dataset):
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
                 for future in concurrent.futures.as_completed(futures):
                     file_name, file_content = future.result()
@@ -91,11 +99,13 @@ class IntpDataset(Dataset):
             if 'Dataset_res250' in self.origin_path:
                 self.stations = [0, 1, 2, 3]
                 # remove holdout station
-                self.stations.remove(self.holdout)
+                for out in self.holdout:
+                    self.stations.remove(out)
 
             elif 'LUFT_res250' in self.origin_path:
                 label_stations = [0, 1, 2, 3, 4, 5]
                 self.stations = [x for x in label_stations if x not in self.holdout]
+
             self.call_list = []
 
             for scene in call_scene_list:
@@ -111,7 +121,7 @@ class IntpDataset(Dataset):
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
 
                 # each time when a thread/process is done, it would be immediately return as future in the loop
@@ -138,7 +148,7 @@ class IntpDataset(Dataset):
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
                 for future in concurrent.futures.as_completed(futures):
                     file_name, file_content = future.result()
@@ -151,13 +161,15 @@ class IntpDataset(Dataset):
                 df = self.total_df_dict[scene]
                 all_candidate = df[df['op']=='mcpm10']
                 self.call_list.append([scene, all_candidate.index[0]])
-                
-        print(len(self.total_df_dict.keys()))
-        
+
+        # print("*********** total_df_dict.keys ******************")
+        # print(len(self.total_df_dict.keys()))
+        # print("*********** total_df_dict.keys ******************")
+
+
         # process the land-use tif
         # TIFF（Tagged Image File Format）是一种常见的图像文件格式，用于存储位图图像和矢量图像。
 
-        # but only have CWSL_resampled.tif in the dataset???
         geo_file = gdal.Open(self.origin_path + 'CWSL_norm.tif')
         tif_channel_list = []
         for i in range(geo_file.RasterCount):
@@ -165,12 +177,15 @@ class IntpDataset(Dataset):
         self.tif = torch.from_numpy(np.stack(tif_channel_list, axis=0))
         self.width = geo_file.RasterXSize
         self.height = geo_file.RasterYSize
-        
+
         # list interested ops
-        self.op_dic = {'mcpm10': 0, 'mcpm2p5': 1, 'ta': 2, 'hur': 3, 'plev': 4, 'precip': 5, 'wsx': 6, 'wsy': 7, 'globalrad': 8, }
+        # only keep the mcmp10 and thing_class
+        self.op_dic = {'mcpm10':0}
+
+        # self.op_dic = {'mcpm10': 0, 'mcpm2p5': 1, 'ta': 2, 'hur': 3, 'plev': 4, 'precip': 5, 'wsx': 6, 'wsy': 7, 'globalrad': 8, }
         self.possible_values = list(self.op_dic.keys())
         self.possible_values.sort()
-        
+
     def __len__(self):
         return len(self.call_list)
 
@@ -193,7 +208,6 @@ class IntpDataset(Dataset):
         for op in d['op'].unique():
             d_op = d.loc[d['op']==op].copy(deep=True)
             if op in ['s_label_0', 's_label_1', 's_label_2', 's_label_3', 's_label_4', 's_label_5', 's_label_6', 'p_label']:
-                # what does s_label and p_label in the dataset mean?
                 op_norm = 'mcpm10'
             else:
                 op_norm = op
@@ -207,7 +221,6 @@ class IntpDataset(Dataset):
         return pd.concat(d_list, axis=0, ignore_index=False)
 
 
-    # 计算两组点之间的欧几里德距离矩阵。
     def distance_matrix(self, x0, y0, x1, y1):
         obs = np.vstack((x0, y0)).T
         interp = np.vstack((x1, y1)).T
@@ -256,8 +269,14 @@ class IntpDataset(Dataset):
             call_item = pd.DataFrame([random_row], index=[random_index])
             remaining_candidate = all_candidate.drop(random_index)
 
-            rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
-            df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
+
+            # don't use other auxilary infomation
+            df_story = pd.concat([remaining_candidate], axis=0, ignore_index=True)
+
+            # rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
+            # df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
+
+
             
         elif self.call_name in ['test', 'eval']:
             # for Early Stopping set and Final Evaluation set
@@ -337,7 +356,8 @@ class IntpDataset(Dataset):
                 interpolated_grid = torch.from_numpy(interpolated_values).reshape((len(graph_candidates), 1))
                 # print(interpolated_grid.size())
             features[:, self.op_dic[op]:self.op_dic[op]+1] = interpolated_grid
-        
+
+        # 3 => normalization
         conditions = (graph_candidates['op'] == 'mcpm10') | (graph_candidates['op'] == f's_label_{self.call_list[idx][1]}')
         features[:, -1] = torch.from_numpy(np.where(conditions, graph_candidates['Thing'] / 3, (self.lowest_rank-1)/3))
         features = features.float()

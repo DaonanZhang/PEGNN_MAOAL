@@ -17,8 +17,16 @@ import support_functions
 # just the entry point for the training process, more details see in solver
 def train(job_id, settings):
     result_sheet = []
+
+    # §§
+    print("Start training...")
+
     list_total, list_err = solver.training(settings=settings, job_id=job_id)
+
+    print("Start evaluation...")
+
     best_err, r_squared = solver.evaluate(settings=settings, job_id=job_id)
+
     result_sheet.append([list_total, list_err, best_err, r_squared])
     
     # collect wandb result into file
@@ -28,6 +36,9 @@ def train(job_id, settings):
         "list_total_0": result_sheet[0][0],
         "list_err_0": result_sheet[0][1],
     }
+
+    print(rtn)
+
     json_dump = json.dumps(rtn)
     with open(settings['agent_dir'] + f'/{job_id}.rtn', 'w') as fresult:
         fresult.write(json_dump)
@@ -44,7 +55,7 @@ if __name__ == '__main__':
         'agent_id': agent_id,
         'agent_dir': agent_dir,
     }
-    
+
     settings.update(config)
 
     # build working folder
@@ -52,6 +63,6 @@ if __name__ == '__main__':
     coffer_slot = myconfig.coffer_path + str(job_id) + '-' + dt_string + '/'
     support_functions.make_dir(coffer_slot)
     settings['coffer_slot'] = coffer_slot
-    
+
     train(job_id, settings)
     

@@ -7,7 +7,6 @@ import subprocess
 
 # get result from slurm and sync to wandb
 
-# don't use this class for now
 
 def collect_slurm_id(path):
     files = os.listdir(path)
@@ -22,10 +21,12 @@ if __name__ == "__main__":
     # login to wandb
     wandb.login(key=myconfig.api_key)
     wandb_path = './wandb/'
-    
-    # first start?
+
+    # 1.time syn?
+    #
     first_start = True
-    processing = True
+    #
+    processing = False
     
     if first_start:
         folder_list = os.listdir(wandb_path)

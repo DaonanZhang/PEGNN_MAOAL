@@ -32,6 +32,7 @@ def padded_seq_to_vectors(padded_seq, logger):
     # Step 1: Form the first tensor containing all actual elements from the batch
     mask = torch.arange(padded_seq.size(1), device=padded_seq.device) < actual_lengths.view(-1, 1)
     tensor1 = torch.masked_select(padded_seq, mask.unsqueeze(-1)).view(-1, padded_seq.size(-1))
+
     # Step 2: Form the second tensor to record which row each element comes from
     tensor2 = torch.repeat_interleave(torch.arange(padded_seq.size(0), device=padded_seq.device), actual_lengths)
     return tensor1, tensor2
@@ -389,6 +390,7 @@ class PEGCN(nn.Module):
         GCN with positional encoder and auxiliary tasks
     """
 
+    # default parameters
     def __init__(self, num_features_in=3, num_features_out=1, emb_hidden_dim=128, emb_dim=16, k=20, conv_dim=64):
         super(PEGCN, self).__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -411,7 +413,8 @@ class PEGCN(nn.Module):
             nn.Linear(emb_hidden_dim // 4, emb_dim)
         )
 
-
+        # new_feature_in = 14,  emb_dim = 32 conv_dim = 256
+        # ===> 46
         self.conv1 = GCNConv(num_features_in + emb_dim, conv_dim)
         self.conv2 = GCNConv(conv_dim, conv_dim)
         # fully connected layer
@@ -443,32 +446,99 @@ class PEGCN(nn.Module):
         emb = self.dec(emb)
         # dec_time = time.time()
 
-        # why should there a transformation between padded_seq_to_vectors?
+        # print("**************emb after decrease the dimension*********************")
+        # print(emb.shape)
+        # print("***********************************************")
+        # torch.Size([64, 62, 32])
+
         emb_l, indexer = padded_seq_to_vectors(emb, input_lenths)
+
+        # print("*************emb_l indexer.shape after pendding**********************")
+        # # for test, to find where the problem is
+        # print(emb_l.shape)
+        # print(indexer.shape)
+        # print("***********************************************")
+        # torch.Size([2974, 32])
+        # ***********************************************
+
+        # inputs = x_b, input_lengths = 64
         x_l, _ = padded_seq_to_vectors(inputs, input_lenths)
+
+        # print("*************x_l after pendding**********************")
+        # # for test, to find where the problem is
+        # print(x_l.shape)
+        # print("***********************************************")
+        # *************x_l after pendding**********************
+        # torch.Size([2974, 10])
+        # ***********************************************
+
+
+        # not entry this!!!!!!!!!!!!
         if self.num_features_in == 2:
             first_element = x_l[:, 0].unsqueeze(-1)
             last_element = x_l[:, -1].unsqueeze(-1)
+
+            # print("*************x_l before concat and after pendding**********************")
+            # # for test, to find where the problem is
+            # print(x_l.shape)
+            # print("***********************************************")
+
+
             x_l = torch.cat([first_element, last_element], dim=-1)
+
+            # print("*************x_l after concat:: final**********************")
+            # # for test, to find where the problem is
+            # print(x_l.shape)
+            # print("***********************************************")
+
+
         y_l, _ = padded_seq_to_vectors(targets, input_lenths)
         c_l, _ = padded_seq_to_vectors(coords, input_lenths)
 
+        # print("*************y_l, c_l after pendding **********************")
+        # # for test, to find where the problem is
+        # print(y_l.shape)
+        # print(c_l.shape)
+        # print("***********************************************")
+        # torch.Size([2974, 1])
+        # torch.Size([2974, 2])
+
 
         # ptv_time = time.time()
-        
+
+        # c_l = 2,  indexer =
         edge_index = knn_graph(c_l, k=self.k, batch=indexer)
+
         edge_weight = makeEdgeWeight(c_l, edge_index).to(self.device)
         # edge_time = time.time()
 
         # concat the embedding with the input
         x = torch.cat((x_l, emb_l), dim=1)
+
+        # print("*************ei, ew, x et. al. :: after concat**********************")
+        # print(x_l.shape)
+        # print(emb_l.shape)
+        # print(x.shape)
+        #
+        # print(edge_index.shape)
+        # print(edge_weight.shape)
+        # print("***********************************************")
+        # torch.Size([2974, 10])
+        # torch.Size([2974, 32])
+        # torch.Size([2974, 42])
+
+        # torch.Size([2, 59480])
+        # torch.Size([59480])
+        # ***********************************************
+        # should be 46?  or it's the problem of the edge_index and edge_weight?
+
         h1 = F.relu(self.conv1(x, edge_index, edge_weight))
         h1 = F.dropout(h1, training=self.training)
         h2 = F.relu(self.conv2(h1, edge_index, edge_weight))
         h2 = F.dropout(h2, training=self.training)
         output = self.fc(h2)
         # CNN_time = time.time()
-        
+
         # print(f'spenc: {spenc_time-start_time}, dec: {dec_time-spenc_time}, ptv: {ptv_time-dec_time}, edge: {edge_time-ptv_time}, CNN: {CNN_time-edge_time}')
 
 

@@ -17,6 +17,10 @@ sweep_id = 'rrf7h9rp'
 # where should the intermedia generated scripts be saved (automatically cleaned at the start of each run)
 slurm_scripts_path = './slurm_scripts/'
 
+# §§
+# only for windows
+# slurm_scripts_path = 'slurm_scripts'
+
 # where should the outputs & logs be saved (automatically cleaned at the start of each run)
 log_path = './logs/'
 # where should calculation nodes save their important results (e.g. best model weights)
@@ -35,13 +39,13 @@ project_name = 'PEGNN_sweep_ber'
 
 e_mail = 'uqqww@student.kit.edu'
 
-# conda location
-# conda_env = '/home/kit/tm/lm6999/miniconda3/envs/new_env'
+# conda location in slurm
+conda_env = '/home/kit/tm/lm6999/miniconda3/envs/new_env'
 
 # §§
 # need update in the slurm environment
 # conda_env = 'C:\\Users\\34959\\anaconda3\\envs\\ml'
-conda_env = 'ml'
+
 
 # file name of the slurm_wrapper, don't change this if you haven't write a new one
 # slurm_wrapper_name = './slurm_wrapper.py'
@@ -51,13 +55,12 @@ slurm_wrapper_name = 'slurm_wrapper.py'
 # file name of the training code
 # change for windows
 # train_script_name = './Trainer.py'
-
 train_script_name = 'Trainer.py'
 
 # define custom sweep hyperparameters
 #     - how many sweeps do you want to run in total
 # 243 combinations for total_sweep
-total_sweep = 2
+total_sweep = 200
 #     - how many sweeps do you want to run parallelly
 pool_size = 40
 

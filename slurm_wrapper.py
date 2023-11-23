@@ -37,14 +37,13 @@ def wrap_task(config=None):
         config = dict(wandb.config)
 
         # §§ DB folder
-        # config['origin_path'] = '../Dataset_res250/'
-        config['origin_path'] = 'Dataset_res250/'
+        config['origin_path'] = '/Dataset_res250/'
 
         config['debug'] = False
         config['bp'] = False
         
         config['batch'] = 64
-        config['accumulation_steps'] = config['full_batch'] // 64
+        config['accumulation_steps'] = config['full_batch'] // config['batch']
         config['epoch'] = 10000
         config['test_batch'] = 50
         config['nn_lr'] = config['lr']
@@ -52,6 +51,7 @@ def wrap_task(config=None):
         config['es_endure'] = 30
 
         config['num_features_in'] = 10
+
         config['num_features_out'] = 1
         config['emb_hidden_dim'] = config['emb_dim'] * 4
         
@@ -74,12 +74,14 @@ def wrap_task(config=None):
             else:
                 time.sleep(60)
 
-
+        # partition gpu_4 => dev_gpu_4
+        # time = 24:00:00 => 00:30:00
         # then build up the slurm script
+
         job_script = \
 f"""#!/bin/bash
 #SBATCH --job-name={myconfig.project_name}
-#SBATCH --partition=sdil
+#SBATCH --partition=gpu_4
 #SBATCH --gres=gpu:4
 #SBATCH --error={myconfig.log_path}%x.%j.err
 #SBATCH --output={myconfig.log_path}%x.%j.out
@@ -97,40 +99,27 @@ python {myconfig.train_script_name} $job_id '{json.dumps(config)}' {agent_id} {a
 """
 
 
-        # §§ cmd for windows
-        # only for test
-        # job_id = 'test'
-        #
-        # job_script = f"""
-        # @echo off
-        # cd Desktop
-        # cd PEGNN
-        # conda activate ml
-        # set job_id={job_id}
-        # set config={json.dumps(config)}
-        # set agent_id={agent_id}
-        # set agent_dir={agent_dir}
-        # python {myconfig.train_script_name} %job_id% %config% %agent_id% %agent_dir%
-        # """
-
         # wandb config agent id agent dir
         
         # Write job submission script to a file
         # change to windows cmd
         with open(myconfig.slurm_scripts_path + f"{wandb.run.id}.sbatch", "w") as f:
             f.write(job_script)
-        # with open(myconfig.slurm_scripts_path + f"{wandb.run.id}.cmd", "w") as f:
+
+        # current_direcorty =os.getcwd()
+        # slurm_scripts_diretocry = os.path.join(current_direcorty, myconfig.slurm_scripts_path)
+        # with open( slurm_scripts_diretocry + f"{wandb.run.id}.cmd", "w") as f:
         #     f.write(job_script)
         
         # Submit job to Slurm system and get job ID
 
         # change script to windows cmd
         cmd = "sbatch " + myconfig.slurm_scripts_path + f"{wandb.run.id}.sbatch"
-        # cmd = myconfig.slurm_scripts_path + f"{wandb.run.id}.cmd"
+        # cmd = slurm_scripts_diretocry + f"{wandb.run.id}.cmd"
 
         # change to windows cmd
         output = subprocess.check_output(cmd, shell=True).decode().strip()
-        # subprocess.run(cmd , shell=True)
+        # subprocess.run([cmd] , shell=True)
 
         # close for now
         job_id = output.split()[-1]
