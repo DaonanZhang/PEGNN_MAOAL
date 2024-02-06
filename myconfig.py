@@ -5,13 +5,13 @@
 api_key = '8407bdbf6e108552607bce672dbb7c285ce4b172'
 
 # is it a new run or continue
-new_run = False
+new_run = True
 
 # sweep id still required
 # currently not used, used for sweep in wandb
 # §§
-sweep_id = 'rrf7h9rp'
 # sweep_id = ''
+sweep_id = ''
 
 
 # where should the intermedia generated scripts be saved (automatically cleaned at the start of each run)
@@ -37,14 +37,15 @@ project_name = 'PEGNN_sweep_ber'
 # e-mail address to recieve notifications
 # e_mail = 'hpcdam.lcf@gmail.com'
 
-e_mail = 'uqqww@student.kit.edu'
+e_mail = 'detecter01@proton.me'
 
 # conda location in slurm
-conda_env = '/home/kit/tm/lm6999/miniconda3/envs/new_env'
+# conda_env = '/home/kit/tm/qg0211/miniconda3/envs/ml'
 
-# §§
-# need update in the slurm environment
-# conda_env = 'C:\\Users\\34959\\anaconda3\\envs\\ml'
+# uqqww
+conda_env = '/home/kit/stud/uqqww/miniconda3/envs/ml'
+
+
 
 
 # file name of the slurm_wrapper, don't change this if you haven't write a new one
@@ -60,7 +61,7 @@ train_script_name = 'Trainer.py'
 # define custom sweep hyperparameters
 #     - how many sweeps do you want to run in total
 # 243 combinations for total_sweep
-total_sweep = 200
+total_sweep = 243
 #     - how many sweeps do you want to run parallelly
 pool_size = 40
 

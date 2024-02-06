@@ -3,5 +3,6 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/PEGNN" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/PEGNN_mini_dataset" vcs="Git" />
   </component>
 </project>

@@ -37,7 +37,7 @@ def wrap_task(config=None):
         config = dict(wandb.config)
 
         # §§ DB folder
-        config['origin_path'] = '/Dataset_res250/'
+        config['origin_path'] = './Dataset_res250/'
 
         config['debug'] = False
         config['bp'] = False
@@ -50,7 +50,8 @@ def wrap_task(config=None):
         config['es_mindelta'] = 0.5
         config['es_endure'] = 30
 
-        config['num_features_in'] = 10
+        # config['num_features_in'] = 10
+        config['num_features_in'] = 2
 
         config['num_features_out'] = 1
         config['emb_hidden_dim'] = config['emb_dim'] * 4

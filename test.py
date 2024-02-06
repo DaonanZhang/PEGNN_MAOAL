@@ -67,26 +67,28 @@ if __name__ == '__main__':
         'origin_path': 'Dataset_res250/',
 
         # debug mode=>data_set
-        'debug': False,
+        'debug': True,
         'bp': False,
 
-        # full_batch->batch->accumulation_steps double
+
         'batch': 32,
-        'accumulation_steps': 512 // 32,
-        'epoch': 1000,
-        'test_batch': 25,
+        'full_batch': 128,
+        'accumulation_steps': 128 // 32,
+
         'nn_lr': 1e-5,
+        'emb_dim': 16,
+        'k': 20,
+        'conv_dim': 256,
+
+        'emb_hidden_dim': 256,
+        'epoch': 1000,
+        'test_batch': 32,
         'es_mindelta': 0.5,
         'es_endure': 10,
 
-        # 'num_features_in': 14,
         'num_features_in': 2,
 
         'num_features_out': 1,
-        'emb_hidden_dim': 128,
-        'emb_dim': 32,
-        'k': 20,
-        'conv_dim': 256,
 
         'seed': 1,
         'model': 'PEGNN',
@@ -95,6 +97,31 @@ if __name__ == '__main__':
         'lowest_rank': 1,
 
         'hp_marker': 'tuned',
+        'nn_length': 3,
+        'nn_hidden_dim': 32,
+        'dropout_rate': 0.1,
+
+
+        # for transformer
+        'd_model': 13,
+        'nhead': 13,
+        'dim_feedforward': 1024,
+        'transformer_dropout': 0.1,
+        'num_encoder_layers': 3,
+
+
+        'aux_task_num': 3,
+
+        # if task_head_ use mffn
+        # 'task_head_nn_length': 3,
+        # 'task_head_nn_hidden_dim': 32,
+        # 'task_head_dropout_rate': 0.1,
+
+        'aux_op_dic': {'mcpm1': 0, 'mcpm2p5': 1, 'mcpm4': 2},
+
+        'env_op_dic': {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6, 'ncpm1':7, 'ncpm2p5': 8},
+
+        'hyper': {'lr': 0.001, 'decay': 0.0}
 
     }
 

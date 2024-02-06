@@ -5,7 +5,9 @@ from matplotlib import pyplot as plt
 
 import Dataloader_PEGNN as dl
 import myconfig
+import solver
 import support_functions
+
 
 import torch
 import os
@@ -15,104 +17,138 @@ import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset
 
+def main():
+    settings = {
+        'agent_id': '00000',
+        'agent_dir': './logs',
+        'origin_path': './Dataset_res250/',
 
+        # debug mode=>data_set
+        'debug': True,
+        'bp': False,
 
-settings = {
-    'agent_id': '00000',
-    'agent_dir': './logs',
-    'origin_path': '../Dataset_res250/',
+        # full_batch->batch->accumulation_steps double
+        'batch': 32,
+        'accumulation_steps': 1,
+        'epoch': 1000,
+        'test_batch': 64,
+        'nn_lr': 1e-5,
+        'es_mindelta': 0.5,
+        'es_endure': 10,
 
-    # debug mode=>data_set
-    'debug': False,
-    'bp': False,
+        # 'num_features_in': 14,
+        'num_features_in': 2,
 
-    # full_batch->batch->accumulation_steps double
-    'batch': 32,
-    'accumulation_steps': 512 // 32,
-    'epoch': 1000,
-    'test_batch': 25,
-    'nn_lr': 1e-5,
-    'es_mindelta': 0.5,
-    'es_endure': 10,
+        'num_features_out': 1,
+        'emb_hidden_dim': 256,
+        'emb_dim': 32,
+        'k': 20,
+        'conv_dim': 256,
 
-    # 'num_features_in': 14,
-    'num_features_in': 2,
+        'seed': 1,
+        'model': 'PEGNN',
+        'fold': 0,
+        'holdout': [0,1],
+        'lowest_rank': 1,
 
-    'num_features_out': 1,
-    'emb_hidden_dim': 256,
-    'emb_dim': 32,
-    'k': 20,
-    'conv_dim': 256,
+        'hp_marker': 'tuned',
 
-    'seed': 1,
-    'model': 'PEGNN',
-    'fold': 0,
-    'holdout': 0,
-    'lowest_rank': 1,
+        'aux_task_num': 3,
 
-    'hp_marker': 'tuned',
+        # if task_head_ use mffn
+        # 'task_head_nn_length': 3,
+        # 'task_head_nn_hidden_dim': 32,
+        # 'task_head_dropout_rate': 0.1,
 
-}
-coffer_slot = myconfig.coffer_path + str("123456") + '/'
+        'aux_op_dic': {'mcpm1': 0, 'mcpm2p5': 1, 'mcpm4': 2},
 
-settings['coffer_slot'] = coffer_slot
+        'env_op_dic': {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6, 'ncpm1': 7,
+                       'ncpm2p5': 8}
 
+    }
+    coffer_slot = myconfig.coffer_path + str("123456") + '/'
 
-support_functions.seed_everything(settings['seed'])
+    settings['coffer_slot'] = coffer_slot
 
-fold = settings['fold']
-holdout = settings['holdout']
-lowest_rank = settings['lowest_rank']
+    support_functions.seed_everything(settings['seed'])
 
-coffer_slot = settings['coffer_slot'] + f'{fold}/'
+    fold = settings['fold']
+    holdout = settings['holdout']
+    lowest_rank = settings['lowest_rank']
 
-support_functions.make_dir(coffer_slot)
+    coffer_slot = settings['coffer_slot'] + f'{fold}/'
 
-if not torch.cuda.is_available():
-    device = torch.device("cpu")
-    ngpu = 0
-    print(f'Working on CPU')
-else:
-    device = torch.device("cuda")
-    ngpu = torch.cuda.device_count()
-    if ngpu > 1:
-        device_list = [i for i in range(ngpu)]
-        print(f'Working on multi-GPU {device_list}')
+    support_functions.make_dir(coffer_slot)
+
+    if not torch.cuda.is_available():
+        device = torch.device("cpu")
+        ngpu = 0
+        print(f'Working on CPU')
     else:
-        print(f'Working on single-GPU')
+        device = torch.device("cuda")
+        ngpu = torch.cuda.device_count()
+        if ngpu > 1:
+            device_list = [i for i in range(ngpu)]
+            print(f'Working on multi-GPU {device_list}')
+        else:
+            print(f'Working on single-GPU')
 
-    # get standarization restore info
-with open(settings['origin_path'] + f'Folds_Info/norm_{fold}.info', 'rb') as f:
-    dic_op_minmax, dic_op_meanstd = pickle.load(f)
-
-
-dataset_train = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
-
-
-dataloader_tr = torch.utils.data.DataLoader(dataset_train, batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers=16, prefetch_factor=32, drop_last=False)
-
-#
-# print(dataset_train[1][0])
-# print(dataset_train.op_dic)
-# # 只有三个torch
-# print(dataloader_tr)
+        # get standarization restore info
+    with open(settings['origin_path'] + f'Folds_Info/norm_{fold}.info', 'rb') as f:
+        dic_op_minmax, dic_op_meanstd = pickle.load(f)
 
 
-# data_iter = iter(dataloader_tr)
-# batch_data = next(data_iter)
-# # 假设 batch_data 包含输入图像和对应的标签
-# images, labels = batch_data
-#
-# # 可视化图像
-#
-# plt.figure(figsize=(10, 10))
-# for i in range(len(images)):
-#     plt.subplot(1, len(images), i + 1)
-#     plt.imshow(images[i].permute(1, 2, 0))  # 如果图像是通道在第一维的形式，需要转换通道顺序
-#     plt.title(f"Label: {labels[i]}")
-#     plt.axis("off")
-#
-# plt.show()
+    dataset_train = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
+
+    dataloader_tr = torch.utils.data.DataLoader(dataset_train, batch_size=settings['batch'], shuffle=True, collate_fn=dl.collate_fn, num_workers=1, prefetch_factor=32, drop_last=False)
 
 
+
+    # dataset_train2 = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
+    #
+    # dataloader_tr2 = torch.utils.data.DataLoader(dataset_train2, batch_size=settings['batch'], shuffle=True,
+    #                                             collate_fn=dl.collate_fn, num_workers=1, prefetch_factor=32,
+    #                                             drop_last=False)
+
+
+    data_iter = iter(dataloader_tr)
+    # data_iter2 = iter(dataloader_tr2)
+
+    for i in range(1):
+        try:
+            batch = next(data_iter)
+            # batch2 = next(data_iter)
+        except StopIteration:
+            data_iter = iter(dataloader_tr)
+            batch = next(data_iter)
+            
+            # data_iter2 = iter(dataloader_tr2)
+            # batch2 = next(data_iter2)
+
+        x_b, c_b, y_b, aux_feature, aux_answers, input_lengths, rest_features = batch
+
+        # print(f'x_b: {x_b.shape}')
+        # print(f'input_lengths: {input_lengths.shape}')
+        # print(f'rest_features: {rest_features.shape}')
+
+        # q_series_tr, input_lenths_tr, input_series_tr, answers_tr = batch
+        # print(f'q_series_tr: {q_series_tr.shape}')
+        # print(f'input_lenths_tr: {input_lenths_tr.shape}')
+        # print(f'input_series_tr: {input_series_tr.shape}')
+        # print(f'answers_tr: {answers_tr.shape}')
+
+
+    # modify in model
+    # feature_size = 12  # feature dim
+    # nhead = 4  # multi-head num
+    # num_layers = 2
+    # encoder_layers = TransformerEncoderLayer(d_model=feature_size, nhead=nhead)
+    # transformer_encoder = TransformerEncoder(encoder_layers, num_layers=num_layers)
+    #
+    # feature_embedding = transformer_encoder(rest_features)
+    #
+    # print(feature_embedding.shape)
+
+if __name__ == "__main__":
+    main()
 

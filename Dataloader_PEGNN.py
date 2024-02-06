@@ -9,6 +9,12 @@ from torch.nn.utils.rnn import pad_sequence
 from osgeo import gdal
 import concurrent.futures
 
+def encode_and_bind(original_dataframe, feature_to_encode, possible_values):
+    enc_df = original_dataframe.copy()
+    for value in possible_values:
+        enc_df.loc[:, feature_to_encode + '_' + str(value)] = (enc_df[feature_to_encode] == value).astype(int)
+    res = enc_df.drop([feature_to_encode], axis=1)
+    return res
 
 class IntpDataset(Dataset):
     def __init__(self, settings, mask_distance, call_name):
@@ -16,7 +22,6 @@ class IntpDataset(Dataset):
         self.origin_path = settings['origin_path']
         self.time_fold = settings['fold']
         self.holdout = settings['holdout']
-
 
         # only in windows to control the thread number
         self.thread_num = 8
@@ -28,6 +33,8 @@ class IntpDataset(Dataset):
         self.call_name = call_name
         self.debug = settings['debug']
 
+        self.task_num = settings['aux_task_num']
+
         # load norm info, std, mean
         with open(self.origin_path + f'Folds_Info/norm_{self.time_fold}.info', 'rb') as f:
             self.dic_op_minmax, self.dic_op_meanstd = pickle.load(f)
@@ -36,20 +43,14 @@ class IntpDataset(Dataset):
         with open(self.origin_path + f'Folds_Info/divide_set_{self.time_fold}.info', 'rb') as f:
             divide_set = pickle.load(f)
 
-        # print("***********  divide_set ******************")
-        # # debug mode
-        # print(divide_set[1][0])
-        # print("***********  divide_set ******************")
-
-
         if call_name == 'train':
             # for training set, call_list is same as call_scene_list, because call item will be chosen randomly
             call_scene_list = divide_set[0]
+            # list of CSV files
 
             # debug mode
             if self.debug and len(call_scene_list) > 2000:
                 call_scene_list = call_scene_list[:2000]
-
 
             # do normalization in the parallel fashion
             # drop bad quality and normalize
@@ -62,16 +63,17 @@ class IntpDataset(Dataset):
                     # save the result in file_content
                     self.total_df_dict[file_name] = file_content
 
+
             self.call_list = []
             for scene in call_scene_list:
                 # df = accordingly scene DataFrame
                 df = self.total_df_dict[scene]
                 all_candidate = df[df['op']=='mcpm10']
                 for index in all_candidate.index.tolist():
-                    # what the mask here means? and how to use it?
                     for mask_buffer in range(51):
                         self.call_list.append([scene, index, mask_buffer])
 
+        #     each csv file 52 times mask_buffer
 
         # for test_set
         elif call_name == 'test':
@@ -79,11 +81,9 @@ class IntpDataset(Dataset):
             # divide_set[0] is train set, divide_set[1] is test set
             call_scene_list = divide_set[1]
 
-
             # debug mode
             if self.debug and len(call_scene_list) > 1000:
                 call_scene_list = call_scene_list[:1000]
-
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
@@ -93,29 +93,23 @@ class IntpDataset(Dataset):
                     file_name, file_content = future.result()
                     self.total_df_dict[file_name] = file_content
 
-            # added
-            self.stations = []
 
+            # fold_out
+            stations = [0, 1, 2, 3]
             if 'Dataset_res250' in self.origin_path:
-                self.stations = [0, 1, 2, 3]
-                # remove holdout station
-                for out in self.holdout:
-                    self.stations.remove(out)
-
-            elif 'LUFT_res250' in self.origin_path:
-                label_stations = [0, 1, 2, 3, 4, 5]
-                self.stations = [x for x in label_stations if x not in self.holdout]
+                for station in self.holdout:
+                    stations.remove(station)
 
             self.call_list = []
-
             for scene in call_scene_list:
-                for station in self.stations:
+                for station in stations:
                     self.call_list.append([scene, station])
 
         # for eval_set
         elif call_name == 'eval':
             # for Final Evaluation set, call_list is holdout station
             call_scene_list = divide_set[1]
+
             if self.debug and len(call_scene_list) > 1000:
                 call_scene_list = call_scene_list[:1000]
 
@@ -129,20 +123,22 @@ class IntpDataset(Dataset):
                     file_name, file_content = future.result()
                     self.total_df_dict[file_name] = file_content
 
-            self.call_list = []
+            # eval
+            stations = []
             if 'Dataset_res250' in self.origin_path:
-                for scene in call_scene_list:
-                    self.call_list.append([scene, self.holdout])
-            elif 'LUFT_res250' in self.origin_path:
-                for scene in call_scene_list:
-                    for station in self.holdout:
-                        self.call_list.append([scene, station])
+                for station in self.holdout:
+                    stations.append(station)
+
+            self.call_list = []
+            for scene in call_scene_list:
+                for station in stations:
+                    self.call_list.append([scene, station])
 
 
-        # what's the difference between train and train_self?
         elif call_name == 'train_self':
             # for training set, call_list is same as call_scene_list, because call item will be chosen randomly
             call_scene_list = divide_set[0]
+
             if self.debug and len(call_scene_list) > 2000:
                 call_scene_list = call_scene_list[:2000]
 
@@ -155,20 +151,11 @@ class IntpDataset(Dataset):
                     self.total_df_dict[file_name] = file_content
 
             # get random call_item from 'mcpm10'
-            # which is also in the paper of PEGNN SO CALLED SHUFFLED MORAN's I
             self.call_list = []
             for scene in call_scene_list:
                 df = self.total_df_dict[scene]
                 all_candidate = df[df['op']=='mcpm10']
                 self.call_list.append([scene, all_candidate.index[0]])
-
-        # print("*********** total_df_dict.keys ******************")
-        # print(len(self.total_df_dict.keys()))
-        # print("*********** total_df_dict.keys ******************")
-
-
-        # process the land-use tif
-        # TIFF（Tagged Image File Format）是一种常见的图像文件格式，用于存储位图图像和矢量图像。
 
         geo_file = gdal.Open(self.origin_path + 'CWSL_norm.tif')
         tif_channel_list = []
@@ -178,13 +165,21 @@ class IntpDataset(Dataset):
         self.width = geo_file.RasterXSize
         self.height = geo_file.RasterYSize
 
-        # list interested ops
         # only keep the mcmp10 and thing_class
-        self.op_dic = {'mcpm10':0}
+        self.primary_op = {'mcpm10':0}
+        self.primary_op_list = list(self.primary_op.keys())
+        self.primary_op_list.sort()
 
-        # self.op_dic = {'mcpm10': 0, 'mcpm2p5': 1, 'ta': 2, 'hur': 3, 'plev': 4, 'precip': 5, 'wsx': 6, 'wsy': 7, 'globalrad': 8, }
-        self.possible_values = list(self.op_dic.keys())
-        self.possible_values.sort()
+        self.aux_op_dic = settings['aux_op_dic']
+        self.aux_op_list = list(self.aux_op_dic.keys())
+        self.aux_op_list.sort()
+
+        # TODO: delete mcpm2.5 in metro aka other_op_dic
+        # TODO: data loader add other mcpm ops for auxiliary tasks
+
+        self.env_op_dic = settings['env_op_dic']
+        self.env_op_list = list(self.env_op_dic.keys())
+        self.env_op_list.sort()
 
     def __len__(self):
         return len(self.call_list)
@@ -199,7 +194,7 @@ class IntpDataset(Dataset):
         df = df[df['Thing']>=self.lowest_rank]
         # normalize all values (coordinates will be normalized later)
         df = self.norm(d=df)
-        
+
         return filename, df
 
     # normalize all values
@@ -215,38 +210,47 @@ class IntpDataset(Dataset):
             # do the normalization
             if op_norm in self.dic_op_minmax.keys():
                 d_op['Result_norm'] = (d_op['Result'] - self.dic_op_minmax[op_norm][0]) / (self.dic_op_minmax[op_norm][1] - self.dic_op_minmax[op_norm][0])
+
             elif op_norm in self.dic_op_meanstd.keys():
                 d_op['Result_norm'] = (d_op['Result'] - self.dic_op_meanstd[op_norm][0]) / self.dic_op_meanstd[op_norm][1]
+
             d_list.append(d_op)
         return pd.concat(d_list, axis=0, ignore_index=False)
 
+    #
+    # def distance_matrix(self, x0, y0, x1, y1):
+    #     obs = np.vstack((x0, y0)).T
+    #     interp = np.vstack((x1, y1)).T
+    #     d0 = np.subtract.outer(obs[:,0], interp[:,0])
+    #     d1 = np.subtract.outer(obs[:,1], interp[:,1])
+    #     # calculate hypotenuse
+    #     return np.hypot(d0, d1)
+    #
+    # def idw_interpolation(self, x, y, values, xi, yi, p=2):
+    #     dist = self.distance_matrix(x, y, xi,yi)
+    #     # In IDW, weights are 1 / distance
+    #     weights = 1.0/(dist+1e-12)**p
+    #     # Make weights sum to one
+    #     weights /= weights.sum(axis=0)
+    #     # Multiply the weights for each interpolated point by all observed Z-values
+    #     return np.dot(weights.T, values)
+    #
+    # def non_interpolation(self, x, y, values, xi,yi, p=2):
+    #     dist = self.distance_matrix(x, y, xi,yi)
+    #     # In IDW, weights are 1 / distance
+    #     weights = 1.0/(dist+1e-12)**p
+    #     # Make weights sum to one
+    #     weights /= weights.sum(axis=0)
+    #     # Multiply the weights for each interpolated point by all observed Z-values
+    #     return np.dot(weights.T, values)
 
-    def distance_matrix(self, x0, y0, x1, y1):
-        obs = np.vstack((x0, y0)).T
-        interp = np.vstack((x1, y1)).T
-        d0 = np.subtract.outer(obs[:,0], interp[:,0])
-        d1 = np.subtract.outer(obs[:,1], interp[:,1])
-        # calculate hypotenuse
-        return np.hypot(d0, d1)
-
-    # (Inverse Distance Weighted)
-    # Inverse Distance Weighted（IDW）是一种用于空间插值的地理信息系统（GIS）和地理统计方法。
-    # 它用于估计未知位置的值，基于已知位置的值以及这些位置之间的距离。
-    # IDW的基本思想是，越接近未知位置的已知观测点对估计的影响越大，距离越远的点对估计的影响越小。
-    def idw_interpolation(self, x, y, values, xi, yi, p=2):
-        dist = self.distance_matrix(x, y, xi,yi)
-        # In IDW, weights are 1 / distance
-        weights = 1.0/(dist+1e-12)**p
-        # Make weights sum to one
-        weights /= weights.sum(axis=0)
-        # Multiply the weights for each interpolated point by all observed Z-values
-        return np.dot(weights.T, values)
-
-
-    # 它允许对象使用索引操作符（方括号表示法）来访问其元素。
-    # 在深度学习或机器学习的上下文中，特别是在使用PyTorch这样的框架时，__getitem__通常被用于定义如何从数据集中加载和返回单个样本。
-    # 这是DataLoader工作流程的一个关键部分。以下是__getitem__方法在数据加载器中的典型用法：
     def __getitem__(self, idx):
+
+        # TODO: test
+        pd.set_option('display.max_rows', None)
+        pd.set_option('display.max_columns', None)
+
+
         if torch.is_tensor(idx):
             idx = idx.tolist()
             
@@ -255,29 +259,40 @@ class IntpDataset(Dataset):
             # for training set, call item is randomly taken from the 'mcpm10'
             #     - get the scenario, filter with lowest reliable sensor rank
             scene = self.call_list[idx][0]
+
             random_index = self.call_list[idx][1]
 
             # df is a directory of all dataframes
             df = self.total_df_dict[scene]
             #     - get a random call_item, those remained are story
             all_candidate = df[df['op']=='mcpm10']
+            # all_candidate: (43, 6)
 
-
-            # shuffled Moran's I
             # only get random set for training set
             random_row = all_candidate.loc[random_index]
             call_item = pd.DataFrame([random_row], index=[random_index])
             remaining_candidate = all_candidate.drop(random_index)
-
-
-            # don't use other auxilary infomation
-            df_story = pd.concat([remaining_candidate], axis=0, ignore_index=True)
+            # remaining_candidate: (42, 6)
 
             # rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
             # df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
+            # print(rest_story.empty)
+            # True
+
+            # only pm10 
+            df_story = remaining_candidate
+
+            aux_story = df.loc[(df['op'].isin(self.aux_op_dic.keys()))]
+
+            rest_story = df.loc[(df['op'].isin(self.env_op_dic.keys()))]
 
 
-            
+
+        #  6 for op,thing,x,y,result,result_norm
+        # remain_candidate: (42, 6)
+        # rest_story: (154, 6)
+        # df_story_other_features: (196, 6)
+
         elif self.call_name in ['test', 'eval']:
             # for Early Stopping set and Final Evaluation set
             #     - get the scenario and target station, filter with lowest reliable sensor rank
@@ -286,14 +301,20 @@ class IntpDataset(Dataset):
             df = self.total_df_dict[scene]
             #     - get call_item by target station, story are filtered with op_dic
             all_candidate = df[df['op']=='mcpm10']
-
             # get the target station
+
+
             call_item = df[df['op']==f's_label_{target}']
 
             if len(call_item) != 1:
                 call_item = call_item[0]
 
-            df_story = df.loc[df['op'].isin(self.op_dic.keys())]
+            df_story = df.loc[df['op'].isin(self.primary_op.keys())]
+
+            # eval don't need aux_task, primary task only
+            aux_story = None
+
+            rest_story = df.loc[(df['op'].isin(self.env_op_dic.keys()))]
             
         elif self.call_name == 'train_self':
             # for training set, call item is randomly taken from the 'mcpm10'
@@ -308,61 +329,151 @@ class IntpDataset(Dataset):
             random_row = all_candidate.loc[random_index]
             call_item = pd.DataFrame([random_row], index=[random_index])
             remaining_candidate = all_candidate.drop(random_index)
-            rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
-            df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
-        
-        # processing senario informations:
+
+            # rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
+            # concat nothing
+            # df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
+
+            df_story = remaining_candidate
+            aux_story = df.loc[(df['op'].isin(self.aux_op_dic.keys()))]
+            rest_story = df.loc[(df['op'].isin(self.env_op_dic.keys()))]
+
+
+        # get graph candidates
+        if self.call_name in ['train', 'train_self']:
+            graph_candidates = all_candidate[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
+
+
+        elif self.call_name in ['test', 'eval']:
+            graph_candidates_1 = df[df['op'] == f's_label_{self.call_list[idx][1]}'][['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
+            graph_candidates_2 = all_candidate[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
+            graph_candidates = pd.concat([graph_candidates_1, graph_candidates_2], axis=0)
+
+    # #     - get pm10's coordinates and answers
+    #     coords = torch.from_numpy(graph_candidates[['Longitude', 'Latitude']].values).float()
+    #     answers = torch.from_numpy(graph_candidates[['Result_norm']].values).float()
+
+
+        # processing scenario information:
         #     - mask out all readings within 'mask_distance'
         if self.mask_distance == -1:
             this_mask = self.call_list[idx][2]
         else:
             this_mask = self.mask_distance
+
+        # df_story = remaining_candidate
+        # only pm10
+        # TODO: Need Test
         df_filtered = df_story.loc[(abs(df_story['Longitude'] - call_item.iloc[0, 2]) + abs(df_story['Latitude'] - call_item.iloc[0, 3])) >= this_mask, :].copy()
         df_filtered = df_filtered.drop(columns=['Result'])
-        
         #     - generate story token serie [value, rank, loc_x, loc_y, op]
         df_filtered = df_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
         aggregated_df = df_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
-        
-        
-        # get graph candidates
-        if self.call_name in ['train', 'train_self']:
-            graph_candidates = all_candidate[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
 
-        elif self.call_name in ['test', 'eval']:
-            graph_candidates_1 = df[df['op'] == f's_label_{self.call_list[idx][1]}'][['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
-            # graph_candidates_1 = aggregated_df[aggregated_df['op'] == f's_label_{self.call_list[idx][1]}']
-            # print(len(graph_candidates_1))
-            graph_candidates_2 = all_candidate[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
+        print(f'aggregated_df: {aggregated_df.shape}')
 
-            graph_candidates = pd.concat([graph_candidates_1, graph_candidates_2], axis=0)
-            
-        # print(graph_candidates)
-        coords = torch.from_numpy(graph_candidates[['Longitude', 'Latitude']].values).float()
-        answers = torch.from_numpy(graph_candidates[['Result_norm']].values).float()
-        
-        features = torch.zeros((len(graph_candidates), len(self.op_dic) + 1))
-        # print(features.size())
-        for op in self.possible_values:
-            aggregated_df_op = aggregated_df[aggregated_df['op']==op]
-            interpolated_grid = torch.zeros((len(graph_candidates), 1))
-            if len(aggregated_df_op) != 0:
-                xi = graph_candidates['Longitude'].values
-                yi = graph_candidates['Latitude'].values
-                x = aggregated_df_op['Longitude'].values
-                y = aggregated_df_op['Latitude'].values
-                values = aggregated_df_op['Result_norm'].values
-                interpolated_values = self.idw_interpolation(x, y, values, xi, yi)
-                interpolated_grid = torch.from_numpy(interpolated_values).reshape((len(graph_candidates), 1))
-                # print(interpolated_grid.size())
-            features[:, self.op_dic[op]:self.op_dic[op]+1] = interpolated_grid
+        #     - get pm10's coordinates and answers
+        coords = torch.from_numpy(aggregated_df[['Longitude', 'Latitude']].values).float()
+        answers = torch.from_numpy(aggregated_df[['Result_norm']].values).float()
 
-        # 3 => normalization
-        conditions = (graph_candidates['op'] == 'mcpm10') | (graph_candidates['op'] == f's_label_{self.call_list[idx][1]}')
-        features[:, -1] = torch.from_numpy(np.where(conditions, graph_candidates['Thing'] / 3, (self.lowest_rank-1)/3))
-        features = features.float()
-        
-        return features, coords, answers
+
+        # _________________________________________features_______________________________________________________
+        # same sequence
+        features_df = aggregated_df[['Result_norm', 'Thing']]
+
+
+        # only the result of (norm_value of mcpm10/s_label, thing/3)
+        features = torch.from_numpy(features_df.to_numpy()).float()
+
+        print(f'features: {features.shape}, \n ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ \n'
+              f'features_df: {features_df.shape}')
+
+
+        # for op in self.primary_op_list:
+        #     aggregated_df_op = aggregated_df[aggregated_df['op']==op]
+        #     #             no more interpolation
+        #     interpolated_grid = torch.zeros((len(graph_candidates), 1))
+        #     if len(aggregated_df_op) != 0:
+        #         # xi = graph_candidates['Longitude'].values
+        #         # yi = graph_candidates['Latitude'].values
+        #         # x = aggregated_df_op['Longitude'].values
+        #         # y = aggregated_df_op['Latitude'].values
+        #         values = aggregated_df_op['Result_norm'].values
+        #         # interpolated_values = self.idw_interpolation(x, y, values, xi, yi)
+        #         # no interpolation
+        #         interpolated_values = self.idw_interpolation(x, y, values, xi, yi)
+        #         interpolated_grid = torch.from_numpy(interpolated_values).reshape((len(graph_candidates), 1))
+        #         features[:, self.primary_op[op]:self.primary_op[op] + 1] = interpolated_grid
+        #
+        #     conditions = (graph_candidates['op'] == 'mcpm10') | (
+        #                 graph_candidates['op'] == f's_label_{self.call_list[idx][1]}')
+        #     features[:, -1] = torch.from_numpy(
+        #         np.where(conditions, graph_candidates['Thing'] / 3, (self.lowest_rank - 1) / 3))
+
+        # _________________________________________aux_task_______________________________________________________
+        if aux_story is not None:
+            aux_filtered = aux_story.drop(columns=['Result'])
+            #     - generate story token serie [value, rank, loc_x, loc_y, op]
+            aux_filtered = aux_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
+            aggregated_aux = aux_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
+
+        # (#aux_task, norm_value, thing/3)
+        aux_features = torch.zeros(len(self.env_op_dic), len(features_df), 2)
+        aux_answers = torch.zeros(self.task_num, len(features_df), 1)
+
+        if aux_story is not None:
+            for op_index, aux_op in enumerate(self.aux_op_list):
+                aggregated_aux_op = aggregated_aux[aggregated_aux['op'] == aux_op]
+                # log the aux_op and keep the sequence with aggregated_df
+
+                for features_df_index, row in aggregated_df.iterrows():
+                    xi = row['Longitude'].values
+                    yi = row['Latitude'].values
+                    matched_aux = aggregated_aux_op[(aggregated_aux_op['Longitude'] == xi) & (aggregated_aux_op['Latitude'] == yi)]
+
+                    if(not matched_aux.empty):
+                        aux_features[op_index, features_df_index] = matched_aux[['Result_norm', 'Thing']].values
+                        aux_answers[op_index, features_df_index] = matched_aux['Result_norm']
+                    else:
+                        # choose -1 as our Masked value
+                        aux_features[op_index, features_df_index] = [-1, -1]
+
+                aux_features= torch.from_numpy(aux_features.to_numpy()).float()
+                aux_answers = torch.from_numpy(aux_answers.to_numpy()).float()
+
+        else:
+            aux_features = None
+            aux_answers = None
+
+
+        # _________________________________________env_features_______________________________________________________
+        # # processing rest features:
+        rs_filtered = rest_story.drop(columns=['Result'])
+        #     - generate story token serie [value, rank, loc_x, loc_y, op]
+        rs_filtered = rs_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
+
+
+        df_one_hot = pd.get_dummies(rs_filtered, columns=['op'])
+        # in the order of regular one_hot df
+        # need to be changed to automatically fit the column name
+        required_ops = ['op_globalrad', 'op_hur', 'op_mcpm2p5', 'op_plev', 'op_precip', 'op_ta', 'op_wsx', 'op_wsy']
+        # check if all the other_features are contained, if not insert the corresponding one-hot row
+
+        self.need_reorder = False
+        for op in required_ops:
+            if op not in df_one_hot.columns:
+                self.need_reorder = True
+                df_one_hot[op] = 0
+        # reorder the columns
+        non_op_columns = [col for col in df_one_hot.columns if not col.startswith('op')]
+        ordered_columns = non_op_columns + required_ops
+        df_one_hot = df_one_hot[ordered_columns]
+
+        # make one hot in int form
+        df_one_hot *= 1
+        rest_feature = torch.tensor(df_one_hot.values).float()
+
+        return features, coords, answers, aux_features, aux_answers, rest_feature,
 
 
 # collate_fn: how samples are batched together
@@ -371,4 +482,9 @@ def collate_fn(examples):
     x_b = pad_sequence([ex[0] for ex in examples if len(ex[0]) > 2], batch_first=True, padding_value=0.0)
     c_b = pad_sequence([ex[1] for ex in examples if len(ex[1]) > 2], batch_first=True, padding_value=0.0)
     y_b = pad_sequence([ex[2] for ex in examples if len(ex[2]) > 2], batch_first=True, padding_value=0.0)
-    return x_b, c_b, y_b, input_lenths
+
+    aux_feature = pad_sequence([ex[3] for ex in examples if len(ex[1]) > 2], batch_first=True, padding_value=0.0)
+    aux_answers = pad_sequence([ex[4] for ex in examples if len(ex[2]) > 2], batch_first=True, padding_value=0.0)
+    rest_feature = pad_sequence([ex[5] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
+
+    return x_b, c_b, y_b, aux_feature, aux_answers, input_lenths, rest_feature

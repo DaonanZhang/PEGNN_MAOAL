@@ -9,21 +9,7 @@ from scipy import sparse
 import torch.nn.parallel
 import torch.utils.data
 from spatial_utils import *
-import time
-
-
-# no usage?
-def length_to_mask(lengths, total_len, device):
-    max_len = total_len
-    # torch.arange(max_len) 创建了一个从 0 到 max_len-1 的一维张量。
-    # .expand(lengths.shape[0], max_len) 扩展了这个一维张量，使其成为一个二维张量，其中的每一行都包含相同的整数序列。
-    # < lengths.unsqueeze(1) 使用逐元素小于比较，将这个二维张量与经过扩展的 lengths 张量进行比较。lengths.unsqueeze(1)
-    # 用于将 lengths 张量从一维扩展为二维，以便进行逐元素比较。
-    # 结果是一个形状为 (batch_size, max_len) 的二维布尔张量 mask，其中的每个元素表示相应位置上的值是否小于 lengths 中对应位置的值。
-    mask = torch.arange(max_len).expand(lengths.shape[0], max_len).to(device) < lengths.unsqueeze(1)
-    # false->0, true->1
-    mask = mask.int()
-    return mask
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 
 def padded_seq_to_vectors(padded_seq, logger):
@@ -65,7 +51,6 @@ class LayerNorm(nn.Module):
     # Batch_norm: same dimension, different features, different examples
     # layer_norm: same features, same examples, different dim
 
-
     def __init__(self, feature_dim, eps=1e-6):
         super(LayerNorm, self).__init__()
         self.gamma = nn.Parameter(torch.ones((feature_dim,)))
@@ -77,14 +62,10 @@ class LayerNorm(nn.Module):
     def forward(self, x):
         # x: [batch_size, embed_dim]
 
-        # yes, it's layer normalization
-
-        # normalize for each embedding
         mean = x.mean(-1, keepdim=True)
         std = x.std(-1, keepdim=True)
+
         # output shape is the same as x
-        # Type not match for self.gamma and self.beta??????????????????????
-        # output: [batch_size, embed_dim]
         return self.gamma * (x - mean) / (std + self.eps) + self.beta
 
 
@@ -102,7 +83,6 @@ def get_activation_function(activation, context_str):
 
 
 class SingleFeedForwardNN(nn.Module):
-
     """
         Creates a single layer fully connected feed forward neural network.
         this will use non-linearity, layer normalization, dropout
@@ -266,7 +246,7 @@ class MultiLayerFeedForwardNN(nn.Module):
             Exception: If given activation or normalizer not supported.
         '''
         assert input_tensor.size()[-1] == self.input_dim
-        
+
         output = input_tensor
         for layer in self.layers:
             # applied in each layer
@@ -275,97 +255,34 @@ class MultiLayerFeedForwardNN(nn.Module):
         return output
 
 
-
-# 这个函数的作用是根据用户指定的初始化方式（"random" 或 "geometric"）生成一组频率值，并将其存储在 freq_list 中
-# 3.2 in the paper: PE(c,tau_min,tau_max, seta_pe) = NN(ST(c,tau_min,tau_max), seta_pe)?
-
-# why in this form, not in the form of cos(C_v / (tau_min * g ** (s/(s-1)))) and sin (C_v / (tau_min * g ** (s/(s-1))))?
-# for context-aware spatial coordinaate embedding?
-def _cal_freq_list(freq_init, frequency_num, max_radius, min_radius):
-    freq_list = None
-    if freq_init == "random":
-        freq_list = torch.rand(frequency_num) * max_radius
-    elif freq_init == "geometric":
-        log_timescale_increment = (math.log(float(max_radius) / float(min_radius)) / (frequency_num * 1.0 - 1))
-        timescales = min_radius * torch.exp(torch.arange(frequency_num, dtype=torch.float32) * log_timescale_increment)
-        freq_list = 1.0 / timescales
-    return freq_list
-
-
-# ******************************* Encoder ***********************************
-# enhance the spatial relation encoder from nn.module? but why only nn.module?
-# Is this so inteligent? ..
-class GridCellSpatialRelationEncoder(nn.Module):
+class SpatialEncoder(nn.Module):
     """
-    Given a list of (deltaX,deltaY), encode them using the position encoding function
+    Given a list of (deltaX,deltaY), encode them using the position encoding
     """
 
-    def __init__(self, spa_embed_dim, coord_dim=2, frequency_num=16,
-                 max_radius=0.01, min_radius=0.00001,
-                 freq_init="geometric",
-                 ffn=None):
+    def __init__(self, spa_embed_dim, coord_dim=2, settings=None, ffn=None):
         """
         Args:
             spa_embed_dim: the output spatial relation embedding dimention
-            coord_dim: the dimention of space, 2D, 3D, or other
-            frequency_num: the number of different sinusoidal with different frequencies/wavelengths
-            max_radius: the largest context radius this model can handle
+            coord_dim: the dimention of space
         """
-        super(GridCellSpatialRelationEncoder, self).__init__()
+        super(SpatialEncoder, self).__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.spa_embed_dim = spa_embed_dim
         self.coord_dim = coord_dim
-        self.frequency_num = frequency_num
-        self.freq_init = freq_init
-        self.max_radius = max_radius
-        self.min_radius = min_radius
         self.ffn = ffn
-        # the frequence we use for each block, alpha in ICLR paper
-        self.cal_freq_list()
-        self.cal_freq_mat()
-        self.input_embed_dim = self.cal_input_dim()
-
+        # input_dim:2
+        self.input_embed_dim = self.coord_dim
+        self.nn_length = settings['nn_length']
+        self.nn_hidden_dim = settings['nn_hidden_dim']
         if self.ffn is not None:
-            self.ffn = MultiLayerFeedForwardNN(2 * frequency_num * 2, spa_embed_dim)
+            self.ffn = MultiLayerFeedForwardNN(self.input_embed_dim, spa_embed_dim,
+                                               num_hidden_layers=settings['nn_length'],
+                                               hidden_dim=settings['nn_hidden_dim'],
+                                               dropout_rate=settings['dropout_rate'])
 
-    def cal_input_dim(self):
-        # compute the dimention of the encoded spatial relation embedding
-        return int(self.coord_dim * self.frequency_num * 2)
-
-    def cal_freq_list(self):
-        self.freq_list = _cal_freq_list(self.freq_init, self.frequency_num, self.max_radius, self.min_radius)
-
-    def cal_freq_mat(self):
-        # freq_mat shape: (frequency_num, 1)
-        # torch.unsqueeze(self.freq_list, 1) 是将self.freq_list的维度进行扩展的操作。
-        # 具体地说，它将self.freq_list中的数据保持不变，并在第一个维度（维度索引为0）之前插入一个新的维度，该新维度的大小为1。
-        freq_mat = torch.unsqueeze(self.freq_list, 1)
-        # self.freq_mat shape: (frequency_num, 2)
-        self.freq_mat = freq_mat.repeat(1, 2)
-
-
-    def make_input_embeds(self, coords):
-        # coords: shape (batch_size, num_context_pt, 2)
-        batch_size, num_context_pt, _ = coords.shape
-        # coords: shape (batch_size, num_context_pt, 2, 1, 1)
-        coords = coords.unsqueeze(-1).unsqueeze(-1)
-        # coords: shape (batch_size, num_context_pt, 2, frequency_num, 2)
-        coords = coords.repeat(1, 1, 1, self.frequency_num, 2)
-        # spr_embeds: shape (batch_size, num_context_pt, 2, frequency_num, 2)
-        spr_embeds = coords * self.freq_mat.to(self.device)
-        # make sinuniod function
-        # sin for 2i, cos for 2i+1
-        # spr_embeds: (batch_size, num_context_pt, 2*frequency_num*2=input_embed_dim)
-        spr_embeds[:, :, :, :, 0::2] = torch.sin(spr_embeds[:, :, :, :, 0::2])  # dim 2i
-        spr_embeds[:, :, :, :, 1::2] = torch.cos(spr_embeds[:, :, :, :, 1::2])  # dim 2i+1
-        # (batch_size, num_context_pt, 2*frequency_num*2)
-        spr_embeds = torch.reshape(spr_embeds, (batch_size, num_context_pt, -1))
-        return spr_embeds
 
     def forward(self, coords):
-
-        # embedding function
-
         """
         Given a list of coords (deltaX, deltaY), give their spatial relation embedding
         Args:
@@ -373,35 +290,33 @@ class GridCellSpatialRelationEncoder(nn.Module):
         Return:
             sprenc: Tensor shape (batch_size, num_context_pt, spa_embed_dim)
         """
-        spr_embeds = self.make_input_embeds(coords)
-
+        spr_embeds = coords
         # Feed Forward Network
         if self.ffn is not None:
             return self.ffn(spr_embeds)
         else:
             return spr_embeds
 
-
 class PEGCN(nn.Module):
-
-    # Hole right part of PEGCN consider the figure 1 in the paper: GCNCONV layers?
 
     """
         GCN with positional encoder and auxiliary tasks
     """
 
     # default parameters
-    def __init__(self, num_features_in=3, num_features_out=1, emb_hidden_dim=128, emb_dim=16, k=20, conv_dim=64):
+    def __init__(self, num_features_in=3, num_features_out=1, emb_hidden_dim=128, emb_dim=16, k=20, conv_dim=64,
+                 aux_task_num = 0, settings=None):
         super(PEGCN, self).__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.num_features_in = num_features_in
         self.emb_hidden_dim = emb_hidden_dim
         self.emb_dim = emb_dim
         self.k = k
+        self.nn_length = settings['nn_length']
+        self.nn_hidden_dim = settings['nn_hidden_dim']
 
-        # an instance of the encoder:GridcellsSpatialRelationEncoder
-        self.spenc = GridCellSpatialRelationEncoder(
-            spa_embed_dim=emb_hidden_dim, ffn=True, min_radius=1e-06, max_radius=360
+        self.spenc = SpatialEncoder(
+            spa_embed_dim=emb_hidden_dim, ffn=True, settings=settings
         )
 
         # decrease the dimension of the embedding
@@ -413,21 +328,34 @@ class PEGCN(nn.Module):
             nn.Linear(emb_hidden_dim // 4, emb_dim)
         )
 
-        # new_feature_in = 14,  emb_dim = 32 conv_dim = 256
-        # ===> 46
-        self.conv1 = GCNConv(num_features_in + emb_dim, conv_dim)
+        # feature dim:12
+        # self.inc_transformer = nn.Linear(12, settings['d_model'])
+        self.encoder_layers = TransformerEncoderLayer(settings['d_model'], settings['nhead'],
+                                                      settings['dim_feedforward'], settings['transformer_dropout'], batch_first=True)
+        self.transformer_encoder = TransformerEncoder(self.encoder_layers, settings['num_encoder_layers'])
+
+        # x_l + emb_l + q_l
+        self.conv1 = GCNConv(num_features_in + emb_dim + 1, conv_dim)
         self.conv2 = GCNConv(conv_dim, conv_dim)
-        # fully connected layer
-        self.fc = nn.Linear(conv_dim, num_features_out)
-        
+
+        # # use ffc as task heads
+        # self.fc = nn.Linear(conv_dim, num_features_out)
+
+        self.task_heads = nn.ModuleList()
+
+        for i in range(0, aux_task_num + 1):
+            head = nn.Linear(conv_dim, num_features_out)
+            self.task_heads.append(head)
+
         self.noise_sigma = torch.nn.Parameter(torch.tensor([0.1, ], device=self.device))
-        
+
+
+        self.Q = None
+        # MTH
+
         # init weights
         for p in self.dec.parameters():
             if p.dim() > 1:
-                # torch.nn.init.kaiming_normal_ 使用Kaiming初始化方法，
-                # 该方法是一种针对ReLU（修正线性单元）激活函数设计的初始化策略。
-                # 它的目标是使权重初始化在训练初始阶段产生的梯度方差接近于1，以防止梯度爆炸或梯度消失问题。
                 torch.nn.init.kaiming_normal_(p)
         for p in self.conv1.parameters():
             if p.dim() > 1:
@@ -435,116 +363,106 @@ class PEGCN(nn.Module):
         for p in self.conv2.parameters():
             if p.dim() > 1:
                 torch.nn.init.kaiming_normal_(p)
-        torch.nn.init.kaiming_normal_(self.fc.weight)
+        # torch.nn.init.kaiming_normal_(self.fc.weight)
 
-    def forward(self, inputs, targets, coords, input_lenths, head_only):
-        # start_time = time.time()
-        # encoding
+        torch.nn.init.kaiming_normal_(self.task_heads[0].weight)
+
+    def forward(self, inputs, targets, coords, input_lengths, rest_features, head_only, aux_features, aux_answers):
+
+        # inputs.shape x: torch.Size([32, 43, 2])
+        # 2: (value, rank)
+
+        # targets.shape y: torch.Size([32, 43, 1])
+        # coords.shape  c: torch.Size([32, 43, 2])
+        # coords = torch.from_numpy(graph_candidates[['Longitude', 'Latitude']].values).float()
+        # answers = torch.from_numpy(graph_candidates[['Result_norm']].values).float()
+
+        # input_lenths.shape: torch.Size([32])
+        # batch_size
+
+        # rest_features.shape = torch.Size([32, 187, 12])
+        # self.Q.shape = torch.Size([32, 187, 1])
+        # rest_feature_Q.shape = torch.Size([32, 187, 13])
+
+        # postional encoding
         emb = self.spenc(coords)
-        # spenc_time = time.time()
         # decrease the dimension of the embedding to the emb_dim
         emb = self.dec(emb)
-        # dec_time = time.time()
-
-        # print("**************emb after decrease the dimension*********************")
-        # print(emb.shape)
-        # print("***********************************************")
-        # torch.Size([64, 62, 32])
-
-        emb_l, indexer = padded_seq_to_vectors(emb, input_lenths)
-
-        # print("*************emb_l indexer.shape after pendding**********************")
-        # # for test, to find where the problem is
-        # print(emb_l.shape)
-        # print(indexer.shape)
-        # print("***********************************************")
-        # torch.Size([2974, 32])
-        # ***********************************************
-
-        # inputs = x_b, input_lengths = 64
-        x_l, _ = padded_seq_to_vectors(inputs, input_lenths)
-
-        # print("*************x_l after pendding**********************")
-        # # for test, to find where the problem is
-        # print(x_l.shape)
-        # print("***********************************************")
-        # *************x_l after pendding**********************
-        # torch.Size([2974, 10])
-        # ***********************************************
+        # emb.shape: torch.Size([32, 47, 16])
+        emb_l, indexer = padded_seq_to_vectors(emb, input_lengths)
+        # emb_l.shape after padding: torch.Size([1376, 16])
+        x_l, _ = padded_seq_to_vectors(inputs, input_lengths)
+        # x_l_shape = torch.Size([1376, 2])
 
 
-        # not entry this!!!!!!!!!!!!
+        # a_l should be in shape of [#aux_task, 13xx, 2]
+        # TODO: AUX_TASKS
+        # _____________________________________Aux_task_____________________________________
+        a_ls = []
+        for i in range(1, len(self.task_heads)):
+            a_i, _ = padded_seq_to_vectors(aux_features[i - 1], input_lengths)
+            a_ls.append(a_i)
+        # _____________________________________Aux_task_____________________________________
+        self.Q = torch.nn.Parameter(torch.ones(rest_features.shape[0], rest_features.shape[1], 1, device=self.device))
+        rest_feature_Q = torch.cat([self.Q, rest_features], dim=2)
+        feature_emb = self.transformer_encoder(rest_feature_Q)
+
+        Q_feature_emb = feature_emb[:,:, 0]
+        Q_feature_emb = Q_feature_emb.unsqueeze(-1)
+        # Q_feature_emb.shape = torch.Size([32, 212, 1])
+
+        q_l, _ = padded_seq_to_vectors(Q_feature_emb, input_lengths)
+        # rest_featrues_l.shapetorch.Size([1509, 1])
+
         if self.num_features_in == 2:
             first_element = x_l[:, 0].unsqueeze(-1)
             last_element = x_l[:, -1].unsqueeze(-1)
-
-            # print("*************x_l before concat and after pendding**********************")
-            # # for test, to find where the problem is
-            # print(x_l.shape)
-            # print("***********************************************")
-
-
             x_l = torch.cat([first_element, last_element], dim=-1)
 
-            # print("*************x_l after concat:: final**********************")
-            # # for test, to find where the problem is
-            # print(x_l.shape)
-            # print("***********************************************")
+        y_l, _ = padded_seq_to_vectors(targets, input_lengths)
+        # y_l.shape after padding: torch.Size([1376, 1])
 
-
-        y_l, _ = padded_seq_to_vectors(targets, input_lenths)
-        c_l, _ = padded_seq_to_vectors(coords, input_lenths)
-
-        # print("*************y_l, c_l after pendding **********************")
-        # # for test, to find where the problem is
-        # print(y_l.shape)
-        # print(c_l.shape)
-        # print("***********************************************")
-        # torch.Size([2974, 1])
-        # torch.Size([2974, 2])
-
-
-        # ptv_time = time.time()
-
-        # c_l = 2,  indexer =
-        edge_index = knn_graph(c_l, k=self.k, batch=indexer)
-
-        edge_weight = makeEdgeWeight(c_l, edge_index).to(self.device)
-        # edge_time = time.time()
+        edge_index = knn_graph(emb_l, k=self.k, batch=indexer)
+        # edge_index.shape = torch.size([2, 29840])
+        edge_weight = makeEdgeWeight(emb_l, edge_index).to(self.device)
+        # edge_weight.shape: torch.Size([27520])
 
         # concat the embedding with the input
-        x = torch.cat((x_l, emb_l), dim=1)
-
-        # print("*************ei, ew, x et. al. :: after concat**********************")
-        # print(x_l.shape)
-        # print(emb_l.shape)
-        # print(x.shape)
-        #
-        # print(edge_index.shape)
-        # print(edge_weight.shape)
-        # print("***********************************************")
-        # torch.Size([2974, 10])
-        # torch.Size([2974, 32])
-        # torch.Size([2974, 42])
-
-        # torch.Size([2, 59480])
-        # torch.Size([59480])
-        # ***********************************************
-        # should be 46?  or it's the problem of the edge_index and edge_weight?
+        x = torch.cat((x_l, emb_l, q_l), dim=1)
+        # x.shape_ after concat: torch.Size([1376, 30])
+        # => 19 = 2 x_l + 16 pe + 1 q_l
+        # x.shape_ after concat: torch.Size([1509, 19])
 
         h1 = F.relu(self.conv1(x, edge_index, edge_weight))
         h1 = F.dropout(h1, training=self.training)
         h2 = F.relu(self.conv2(h1, edge_index, edge_weight))
         h2 = F.dropout(h2, training=self.training)
-        output = self.fc(h2)
-        # CNN_time = time.time()
+        output = self.task_heads[0](h2)
 
-        # print(f'spenc: {spenc_time-start_time}, dec: {dec_time-spenc_time}, ptv: {ptv_time-dec_time}, edge: {edge_time-ptv_time}, CNN: {CNN_time-edge_time}')
 
+        # TODO: AUX_TASKS
+        aux_outputs = []
+        # _____________________________________Aux_task_____________________________________
+        if aux_features is not None and aux_answers is not None:
+            a_s = []
+            for i in range(1, len(self.task_heads)):
+                a_s.append(torch.cat((a_ls[i - 1], emb_l, q_l), dim=1))
+
+            for i in range(1, len(self.task_heads)):
+                # not x -> rather aux_x: eg. pm2.5
+                aux_x = a_s[i - 1]
+                h1 = F.relu(self.conv1(aux_x, edge_index, edge_weight))
+                h1 = F.dropout(h1, training=self.training)
+                h2 = F.relu(self.conv2(h1, edge_index, edge_weight))
+                h2 = F.dropout(h2, training=self.training)
+
+                aux_output = self.task_heads[i](h2)
+                aux_outputs.append(aux_output)
+        # _____________________________________Aux_task_____________________________________
 
         # the result of output and y_l, in order to compare the BMC bzw. lost function
         if not head_only:
-            return output, y_l
+            return output, y_l, aux_outputs, aux_answers
         else:
             output_head = extract_first_element_per_batch(output, indexer)
             target_head = extract_first_element_per_batch(y_l, indexer)
@@ -561,7 +479,7 @@ class PEGCN(nn.Module):
           loss: A float tensor. Balanced MSE Loss.
         """
         noise_var = self.noise_sigma ** 2
-        logits = - (pred - target.T).pow(2) / (2 * noise_var)   # logit size: [batch, batch]
-        loss = F.cross_entropy(logits, torch.arange(pred.shape[0]).to(self.device))     # contrastive-like loss
-        loss = loss * (2 * noise_var).detach()  # optional: restore the loss scale, 'detach' when noise is learnable 
+        logits = - (pred - target.T).pow(2) / (2 * noise_var)  # logit size: [batch, batch]
+        loss = F.cross_entropy(logits, torch.arange(pred.shape[0]).to(self.device))  # contrastive-like loss
+        loss = loss * (2 * noise_var).detach()  # optional: restore the loss scale, 'detach' when noise is learnable
         return loss

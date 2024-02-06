@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import sys
 
 # in the slurm file
-sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/Datasets')
+# sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/Datasets')
 
 
 import Dataloader_PEGNN as dl
@@ -32,7 +32,64 @@ import support_functions
 
 
 
-# where is the auxilary task and the loss from there?
+def map_param_to_block(shared_params):
+    param_to_block = {}
+
+    for i, (name, param) in enumerate(shared_params):
+        if 'noise' in name:
+            param_to_block[i] = 0
+        elif 'spenc' or 'dec' in name:
+            param_to_block[i] = 1
+        elif 'encoder' in name:
+            param_to_block[i] = 2
+        elif 'conv1' in name:
+            param_to_block[i] = 3
+        elif 'conv2' in name:
+            param_to_block[i] = 4
+    module_num = 5
+    return param_to_block, module_num
+
+class hypermodel(nn.Module):
+    def __init__(self, task_num, module_num, param_to_block):
+
+        # 替换target grad 参考aux grad 替换成新的考虑aux grad 的新的梯度
+        super(hypermodel, self).__init__()
+        self.task_num = task_num
+        self.module_num = module_num
+        self.param_to_block = param_to_block
+        self.modularized_lr = nn.Parameter(torch.ones(task_num, module_num))
+        self.nonlinear = nn.ReLU()
+        self.scale_factor = 1.0
+
+    def forward(self, loss_vector, shared_params, whether_single=1, train_lr=1.0):
+        if whether_single == 1:
+            grads = torch.autograd.grad(loss_vector[0], shared_params, create_graph=True)
+            if self.nonlinear is not None:
+                grads = tuple(self.nonlinear(self.modularized_lr[0][self.param_to_block[m]]) * g * train_lr for m, g in
+                              enumerate(grads))
+            else:
+                grads = tuple(
+                    self.modularized_lr[0][self.param_to_block[m]] * g * train_lr for m, g in enumerate(grads))
+            return grads
+        else:
+            # main target loss and grad
+            grads = torch.autograd.grad(loss_vector[0], shared_params, create_graph=True)
+            loss_num = len(loss_vector)
+            for task_id in range(1, loss_num):
+                aux_grads = torch.autograd.grad(loss_vector[task_id], shared_params, create_graph=True)
+                if self.nonlinear is not None:
+
+                    # tupel with len: len(grads, aux_grads)
+                    # g:grads, g_aux:aux_grads, m:index in zip()--len(grads)
+                    grads = tuple((g + self.scale_factor * self.nonlinear(
+                        self.modularized_lr[task_id - 1][self.param_to_block[m]]) * g_aux) * train_lr for m, (g, g_aux)
+                                  in enumerate(zip(grads, aux_grads)))
+                else:
+                    grads = tuple((g + self.scale_factor * self.modularized_lr[task_id - 1][
+                        self.param_to_block[m]] * g_aux) * train_lr for m, (g, g_aux) in
+                                  enumerate(zip(grads, aux_grads)))
+            return grads
+
 def bmc_loss(pred, target, noise_var, device):
     """Compute the Balanced MSE Loss (BMC) between `pred` and the ground truth `targets`.
     Args:
@@ -48,8 +105,13 @@ def bmc_loss(pred, target, noise_var, device):
     return loss
 
 # lack of the file: support_functions.py !!
-    
+
+
+from gauxlearn.optim import MetaOptimizer
+
 def training(settings, job_id):
+
+
     support_functions.seed_everything(settings['seed'])
 
     fold = settings['fold']
@@ -84,14 +146,6 @@ def training(settings, job_id):
     dataset_train = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
     dataloader_tr = torch.utils.data.DataLoader(dataset_train, batch_size=settings['batch'], shuffle=True, collate_fn=dl.collate_fn, num_workers=16, prefetch_factor=32, drop_last=True)
 
-    # self_dataloaders = []
-    # self_dataloaders.append(
-    #     torch.utils.data.DataLoader(
-    #         dl.IntpDataset(settings=settings, mask_distance=0, call_name='train_self'),
-    #         batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers=16, prefetch_factor=32, drop_last=True
-    #     )
-    # )
-
     test_dataloaders = []
     for mask_distance in [0, 20, 50]:
         test_dataloaders.append(
@@ -101,17 +155,39 @@ def training(settings, job_id):
             )
         )
 
-
     # build model
-    model = PEGCN(num_features_in=settings['num_features_in'], num_features_out=settings['num_features_out'], emb_hidden_dim=settings['emb_hidden_dim'], emb_dim=settings['emb_dim'], k=settings['k'], conv_dim=settings['conv_dim']).to(device)
+    model = PEGCN(num_features_in=settings['num_features_in'], num_features_out=settings['num_features_out'], emb_hidden_dim=settings['emb_hidden_dim'],
+                  emb_dim=settings['emb_dim'], k=settings['k'], conv_dim=settings['conv_dim'],
+                  aux_task_num=settings['aux_task_num'], settings=settings).to(device)
     model = model.float()
 
+    # Added part MAOAL
+    # build hypermodel
+    shared_parameters = [(name,param) for name, param in model.named_parameters() if 'task' not in name]
+
+    # print(len(shared_parameters))
+    # for index, (name, param) in enumerate(shared_parameters):
+    #     print(index, name, param.shape)
+
+    param_to_block, module_num = map_param_to_block(shared_parameters)
+    # print("the initial number of modules:",module_num)
+    modular = hypermodel(settings['aux_task_num'], module_num, param_to_block).to(device)
+
+
+    # TODO: might need to rewrite
     loss_func = torch.nn.MSELoss()
+
     if ngpu > 1:
         model = torch.nn.DataParallel(model, device_ids=device_list)
     print(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=settings['nn_lr'])
+
+    # Added part MAOAL
+    # TODO: add MAOAL
+    m_optimizer = optim.SGD( modular.parameters(), lr = settings['hyper']['lr'], momentum = 0.9, weight_decay = settings['hyper']['decay'] )
+    meta_optimizer = MetaOptimizer(meta_optimizer= m_optimizer, hpo_lr = 1.0, truncate_iter = 3, max_grad_norm = 10)
+    modular = modular.to(device)
 
     # set training loop
     epochs = settings['epoch']
@@ -146,40 +222,32 @@ def training(settings, job_id):
 
         try:
             batch = next(data_iter)
-
         except StopIteration:
             data_iter = iter(dataloader_tr)
             batch = next(data_iter)
 
+        x_b, c_b, y_b, aux_feature, aux_answers, input_lengths, rest_features = batch
+        x_b, c_b, y_b, aux_feature, aux_answers, input_lengths, rest_features = x_b.to(device), c_b.to(device), \
+                                                                              y_b.to(device), aux_feature.to(device), \
+                                                                              aux_answers.to(device), input_lengths.to(device), \
+                                                                                rest_features.to(device)
 
-        x_b, c_b, y_b, input_lenths = batch
-
-        # print("**********x_b, c_b, y_b shape*************")
-        # print(x_b.shape)
-        # print(c_b.shape)
-        # print(y_b.shape)
-        # # print(input_lenths.shape) batch_size
-        # print("***********************")
-        # batchsize, XXXX, feature_dim
-
-
-
-        x_b, c_b, y_b, input_lenths = x_b.to(device), c_b.to(device), y_b.to(device), input_lenths.to(device)
-
-        # exception in this line of code
         # forward propagation
-        outputs_b, targets_b = model(x_b, y_b, c_b, input_lenths, True)
-
-        # until here!!!!
-        batch_loss = loss_func(outputs_b, targets_b)
-        batch_loss /= settings['accumulation_steps']
+        outputs_b, targets_b = model(inputs = x_b, target = y_b, coords = c_b, input_lengths = input_lengths, rest_features = rest_features, head_only= True, aux_feature = aux_feature, aux_answers = aux_answers)
 
 
-        # accmulation__loss_sum
-        inter_loss += batch_loss.item()
-        mini_loss += batch_loss.item()
+        # print(f'outputs_b:{outputs_b.shape}')
+        # print(f'targets_b:{targets_b.shape}')
+        # outputs_b: torch.Size([32, 1])
+        # targets_b: torch.Size([32, 1])
+
+        primary_loss = loss_func(outputs_b, targets_b)
+        primary_loss /= settings['accumulation_steps']
+
+        inter_loss += primary_loss.item()
+        mini_loss += primary_loss.item()
         # backward propagation
-        batch_loss.backward()
+        primary_loss.backward()
 
         if (iter_counter+1) % settings['accumulation_steps'] == 0:
             optimizer.step()
@@ -190,14 +258,9 @@ def training(settings, job_id):
             t_train_iter_start = t_train_iter_end
         iter_counter += 1
 
-        # for test Not even in this loop...
-        # print("***********************")
-        # print("***********************")
-        # print((iter_counter+1))
-        # print(settings['test_batch'])
-        # print(settings['accumulation_steps'])
+
         print((iter_counter+1) % (settings['test_batch'] * settings['accumulation_steps']))
-        # print("***********************")
+
 
         # Test batch
         # only log for after finish a full_batch
@@ -207,19 +270,16 @@ def training(settings, job_id):
             target_list = []
             test_loss = 0
             for dataloader_ex in test_dataloaders:
-                for x_b, c_b, y_b, input_lenths in dataloader_ex:
-                    x_b, c_b, y_b, input_lenths = x_b.to(device), c_b.to(device), y_b.to(device), input_lenths.to(device)
-                    outputs_b, targets_b = model(x_b, y_b, c_b, input_lenths, True)
+                for x_b, c_b, y_b, input_lenths, rest_features in dataloader_ex:
+                    x_b, c_b, y_b, input_lenths, rest_features = x_b.to(device), c_b.to(device), y_b.to(device), input_lenths.to(device), rest_features.to(device)
+                    outputs_b, targets_b = model(x_b, y_b, c_b, input_lenths, rest_features, True)
 
                     output_list.append(outputs_b)
                     target_list.append(targets_b)
 
-            # print(f'output_list: {len(output_list)}')
-            # print(f'output_list_item: {output_list[0].size()}')
             output = torch.cat(output_list)
             target = torch.cat(target_list)
-            # print(f'output: {output.size()}')
-            # print(f'target: {target.size()}')
+
             test_loss = torch.nn.MSELoss(reduction='sum')(output, target).item()
 
             output = output.squeeze().detach().cpu()
@@ -248,16 +308,6 @@ def training(settings, job_id):
             )
 
 
-            # if there's no such parameter, the result would be never saved
-
-            # for test
-            # print("***********************")
-            # print(best_err)
-            # print(test_loss)
-            # print(settings['es_mindelta'])
-            # print("***********************")
-
-
             if best_err - test_loss > settings['es_mindelta']:
                 best_err = test_loss
                 torch.save(model.state_dict(), coffer_slot + "best_params")
@@ -269,42 +319,6 @@ def training(settings, job_id):
                     print('INFO: Early stopping')
                     es_flag = 1
                     break
-
-#             output_list = []
-#             target_list = []
-#             test_loss = 0
-#             for dataloader_ex in self_dataloaders:
-#                 for x_b, c_b, y_b, input_lenths in dataloader_ex:
-#                     x_b, c_b, y_b, input_lenths = x_b.to(device), c_b.to(device), y_b.to(device), input_lenths.to(device)
-#                     outputs_b, targets_b = model(x_b, y_b, c_b, input_lenths, True)
-
-#                     batch_loss = loss_func(outputs_b, targets_b)
-
-#                     test_loss += batch_loss.item()
-#                     output_list.append(outputs_b.detach().cpu())
-#                     target_list.append(targets_b.detach().cpu())
-
-#             output = torch.cat(output_list).squeeze()
-#             target = torch.cat(target_list).squeeze()
-
-#             test_means_origin = output * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
-#             test_y_origin = target * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
-
-#             mae = mean_squared_error(test_y_origin, test_means_origin, squared=False)
-#             r_squared = stats.pearsonr(test_y_origin, test_means_origin)
-#             print(f'\t\t--------\n\t\tr_squared: {str(r_squared[0])}, MSE: {str(mae)}\n\t\t--------\n')
-
-#             list_err.append(float(test_loss))
-#             list_total.append(float(inter_loss))
-#             inter_loss = 0
-
-#             title = f'Fold{fold}_holdout{holdout}_Md_all: MSE {round(mae, 2)} R2 {round(r_squared[0], 2)}'
-#             support_functions.save_square_img(
-#                 contents=[test_y_origin.numpy(), test_means_origin.numpy()],
-#                 xlabel='targets_ex', ylabel='output_ex',
-#                 savename=os.path.join(coffer_slot, f'self_{real_iter}'),
-#                 title=title
-#             )
 
         print("one epoch finished")
         if real_iter > settings['epoch']:
@@ -319,20 +333,6 @@ def training(settings, job_id):
 # to evaluate the result of training
 def evaluate(settings, job_id):
     support_functions.seed_everything(settings['seed'])
-    
-    # scan the correct coffer
-
-    # Fold（折叠）：
-    #
-    # "Fold" 通常指的是在交叉验证（Cross-Validation）中的一个子集数据。交叉验证是一种评估机器学习模型性能的方法，它将数据集分成若干个互不重叠的折叠（folds），然后依次使用这些折叠来训练和验证模型。
-    # 例如，5折交叉验证将数据集分成5个折叠，每次使用其中4个折叠来训练模型，然后使用剩下的1个折叠来验证模型。这个过程循环5次，每个折叠都曾被用作验证集。
-
-    # "Fold" 可以表示交叉验证中的一个数据子集，也可以表示折叠的数量。
-    # Holdout（保留集）：
-    # "Holdout" 是指从数据集中保留一部分数据，不用于训练模型，而是用于评估模型的性能。通常，将数据集划分为训练集（用于训练模型）和测试集（用于评估模型）。
-    # 在一些情况下，还可以进一步划分为训练集、验证集和测试集，其中验证集用于调整模型的超参数。
-    # "Holdout" 数据集的目的是模拟模型在未见过的数据上的性能，以便评估模型的泛化能力。
-
     fold = settings['fold']
     holdout = settings['holdout']
     lowest_rank = settings['lowest_rank']
@@ -345,7 +345,6 @@ def evaluate(settings, job_id):
             coffer_dir = myconfig.coffer_path + dir + f'/{fold}/'
             break
 
-    # ./coffer/123456/0
 
     # Get device setting
     if not torch.cuda.is_available(): 
@@ -366,7 +365,10 @@ def evaluate(settings, job_id):
         dic_op_minmax, dic_op_meanstd = pickle.load(f)
         
     # build model
-    model = PEGCN(num_features_in=settings['num_features_in'], num_features_out=settings['num_features_out'], emb_hidden_dim=settings['emb_hidden_dim'], emb_dim=settings['emb_dim'], k=settings['k'], conv_dim=settings['conv_dim']).to(device)
+    model = PEGCN(num_features_in=settings['num_features_in'], num_features_out=settings['num_features_out'],
+                  emb_hidden_dim=settings['emb_hidden_dim'], emb_dim=settings['emb_dim'], k=settings['k'],
+                  conv_dim=settings['conv_dim'], aux_task_num= 0, settings=settings
+                  ).to(device)
 
     model = model.float()
     
@@ -381,10 +383,9 @@ def evaluate(settings, job_id):
     rtn_mae_list = []
     rtn_rsq_list = []
 
-
-    # even not enter this for loop?
     for mask_distance in [0, 20, 50]:
         dataset_eval = dl.IntpDataset(settings=settings, mask_distance=mask_distance, call_name='eval')
+
         dataloader_ev = torch.utils.data.DataLoader(dataset_eval, batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers=16, prefetch_factor=32, drop_last=True)
 
         # Eval batch, where the print comes from
@@ -392,26 +393,13 @@ def evaluate(settings, job_id):
 
         output_list = []
         target_list = []
-        for x_b, c_b, y_b, input_lenths in dataloader_ev:
+        for x_b, c_b, y_b, input_lengths,rest_features in dataloader_ev:
 
-            # only for test
-            # print("***********x_b y_b c_b input_lenths**************")
-            # print(x_b.shape)
-            # print(y_b.shape)
-            # print(c_b.shape)
-            # print(input_lenths.shape)
-            # print("*************************")
+            x_b, c_b, y_b, input_lengths, rest_features = x_b.to(device), c_b.to(device), y_b.to(
+                device), input_lengths.to(device), rest_features.to(device)
 
-
-
-            x_b, c_b, y_b, input_lenths = x_b.to(device), c_b.to(device), y_b.to(device), input_lenths.to(device)
-
-
-            outputs_b, targets_b = model(x_b, y_b, c_b, input_lenths, True)
-
-
-
-            # stop here
+            # forward propagation
+            outputs_b, targets_b = model(x_b, y_b, c_b, input_lengths, rest_features, True)
 
             output_list.append(outputs_b.detach().cpu())
             target_list.append(targets_b.detach().cpu())
