@@ -367,7 +367,7 @@ class PEGCN(nn.Module):
 
         torch.nn.init.kaiming_normal_(self.task_heads[0].weight)
 
-    def forward(self, inputs, targets, coords, input_lengths, rest_features, head_only, aux_features, aux_answers):
+    def forward(self, inputs, targets, coords, input_lengths, rest_features, head_only, aux_answers):
 
         # inputs.shape x: torch.Size([32, 43, 2])
         # 2: (value, rank)
@@ -384,25 +384,18 @@ class PEGCN(nn.Module):
         # self.Q.shape = torch.Size([32, 187, 1])
         # rest_feature_Q.shape = torch.Size([32, 187, 13])
 
-        # postional encoding
+        print(f'{aux_answers.shape} aux_answers')
+
+
+        # ________________________________________postional encoding_______________________________________________________
         emb = self.spenc(coords)
         # decrease the dimension of the embedding to the emb_dim
         emb = self.dec(emb)
         # emb.shape: torch.Size([32, 47, 16])
         emb_l, indexer = padded_seq_to_vectors(emb, input_lengths)
         # emb_l.shape after padding: torch.Size([1376, 16])
-        x_l, _ = padded_seq_to_vectors(inputs, input_lengths)
-        # x_l_shape = torch.Size([1376, 2])
 
-
-        # a_l should be in shape of [#aux_task, 13xx, 2]
-        # TODO: AUX_TASKS
-        # _____________________________________Aux_task_____________________________________
-        a_ls = []
-        for i in range(1, len(self.task_heads)):
-            a_i, _ = padded_seq_to_vectors(aux_features[i - 1], input_lengths)
-            a_ls.append(a_i)
-        # _____________________________________Aux_task_____________________________________
+        # _________________________________________env_features_______________________________________________________
         self.Q = torch.nn.Parameter(torch.ones(rest_features.shape[0], rest_features.shape[1], 1, device=self.device))
         rest_feature_Q = torch.cat([self.Q, rest_features], dim=2)
         feature_emb = self.transformer_encoder(rest_feature_Q)
@@ -414,13 +407,14 @@ class PEGCN(nn.Module):
         q_l, _ = padded_seq_to_vectors(Q_feature_emb, input_lengths)
         # rest_featrues_l.shapetorch.Size([1509, 1])
 
+        # _________________________________________features_______________________________________________________
+        x_l, _ = padded_seq_to_vectors(inputs, input_lengths)
+        # x_l_shape = torch.Size([1376, 2])
+
         if self.num_features_in == 2:
             first_element = x_l[:, 0].unsqueeze(-1)
             last_element = x_l[:, -1].unsqueeze(-1)
             x_l = torch.cat([first_element, last_element], dim=-1)
-
-        y_l, _ = padded_seq_to_vectors(targets, input_lengths)
-        # y_l.shape after padding: torch.Size([1376, 1])
 
         edge_index = knn_graph(emb_l, k=self.k, batch=indexer)
         # edge_index.shape = torch.size([2, 29840])
@@ -439,30 +433,25 @@ class PEGCN(nn.Module):
         h2 = F.dropout(h2, training=self.training)
         output = self.task_heads[0](h2)
 
+        y_l, _ = padded_seq_to_vectors(targets, input_lengths)
+        # y_l.shape after padding: torch.Size([1376, 1])
 
-        # TODO: AUX_TASKS
+        # _____________________________________Aux_outputs_____________________________________
         aux_outputs = []
-        # _____________________________________Aux_task_____________________________________
-        if aux_features is not None and aux_answers is not None:
-            a_s = []
-            for i in range(1, len(self.task_heads)):
-                a_s.append(torch.cat((a_ls[i - 1], emb_l, q_l), dim=1))
+        aux_y_ls = []
 
-            for i in range(1, len(self.task_heads)):
-                # not x -> rather aux_x: eg. pm2.5
-                aux_x = a_s[i - 1]
-                h1 = F.relu(self.conv1(aux_x, edge_index, edge_weight))
-                h1 = F.dropout(h1, training=self.training)
-                h2 = F.relu(self.conv2(h1, edge_index, edge_weight))
-                h2 = F.dropout(h2, training=self.training)
+        for i in range(1, len(self.task_heads)):
+            aux_output = self.task_heads[i](h2)
+            aux_outputs.append(aux_output)
 
-                aux_output = self.task_heads[i](h2)
-                aux_outputs.append(aux_output)
-        # _____________________________________Aux_task_____________________________________
+            # TODO: still have some problem for the aux_y_l
+            aux_y_l, _ = padded_seq_to_vectors(aux_answers[i, :], input_lengths)
+            aux_y_ls.append(aux_y_l)
+
 
         # the result of output and y_l, in order to compare the BMC bzw. lost function
         if not head_only:
-            return output, y_l, aux_outputs, aux_answers
+            return output, y_l, aux_outputs, aux_y_ls
         else:
             output_head = extract_first_element_per_batch(output, indexer)
             target_head = extract_first_element_per_batch(y_l, indexer)

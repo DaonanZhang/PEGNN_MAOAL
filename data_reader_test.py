@@ -117,15 +117,12 @@ def main():
     for i in range(1):
         try:
             batch = next(data_iter)
-            # batch2 = next(data_iter)
         except StopIteration:
             data_iter = iter(dataloader_tr)
             batch = next(data_iter)
-            
-            # data_iter2 = iter(dataloader_tr2)
-            # batch2 = next(data_iter2)
 
-        x_b, c_b, y_b, aux_feature, aux_answers, input_lengths, rest_features = batch
+
+        x_b, c_b, y_b, aux_y_b, input_lenths, rest_feature = batch
 
         # print(f'x_b: {x_b.shape}')
         # print(f'input_lengths: {input_lengths.shape}')

@@ -174,9 +174,6 @@ class IntpDataset(Dataset):
         self.aux_op_list = list(self.aux_op_dic.keys())
         self.aux_op_list.sort()
 
-        # TODO: delete mcpm2.5 in metro aka other_op_dic
-        # TODO: data loader add other mcpm ops for auxiliary tasks
-
         self.env_op_dic = settings['env_op_dic']
         self.env_op_list = list(self.env_op_dic.keys())
         self.env_op_list.sort()
@@ -194,7 +191,6 @@ class IntpDataset(Dataset):
         df = df[df['Thing']>=self.lowest_rank]
         # normalize all values (coordinates will be normalized later)
         df = self.norm(d=df)
-
         return filename, df
 
     # normalize all values
@@ -206,7 +202,6 @@ class IntpDataset(Dataset):
                 op_norm = 'mcpm10'
             else:
                 op_norm = op
-
             # do the normalization
             if op_norm in self.dic_op_minmax.keys():
                 d_op['Result_norm'] = (d_op['Result'] - self.dic_op_minmax[op_norm][0]) / (self.dic_op_minmax[op_norm][1] - self.dic_op_minmax[op_norm][0])
@@ -214,42 +209,17 @@ class IntpDataset(Dataset):
             elif op_norm in self.dic_op_meanstd.keys():
                 d_op['Result_norm'] = (d_op['Result'] - self.dic_op_meanstd[op_norm][0]) / self.dic_op_meanstd[op_norm][1]
 
+            # norm the thing
+            d_op['Thing'] /= 3
+
             d_list.append(d_op)
         return pd.concat(d_list, axis=0, ignore_index=False)
 
-    #
-    # def distance_matrix(self, x0, y0, x1, y1):
-    #     obs = np.vstack((x0, y0)).T
-    #     interp = np.vstack((x1, y1)).T
-    #     d0 = np.subtract.outer(obs[:,0], interp[:,0])
-    #     d1 = np.subtract.outer(obs[:,1], interp[:,1])
-    #     # calculate hypotenuse
-    #     return np.hypot(d0, d1)
-    #
-    # def idw_interpolation(self, x, y, values, xi, yi, p=2):
-    #     dist = self.distance_matrix(x, y, xi,yi)
-    #     # In IDW, weights are 1 / distance
-    #     weights = 1.0/(dist+1e-12)**p
-    #     # Make weights sum to one
-    #     weights /= weights.sum(axis=0)
-    #     # Multiply the weights for each interpolated point by all observed Z-values
-    #     return np.dot(weights.T, values)
-    #
-    # def non_interpolation(self, x, y, values, xi,yi, p=2):
-    #     dist = self.distance_matrix(x, y, xi,yi)
-    #     # In IDW, weights are 1 / distance
-    #     weights = 1.0/(dist+1e-12)**p
-    #     # Make weights sum to one
-    #     weights /= weights.sum(axis=0)
-    #     # Multiply the weights for each interpolated point by all observed Z-values
-    #     return np.dot(weights.T, values)
-
     def __getitem__(self, idx):
 
-        # TODO: test
+        # TODO: Debug
         pd.set_option('display.max_rows', None)
         pd.set_option('display.max_columns', None)
-
 
         if torch.is_tensor(idx):
             idx = idx.tolist()
@@ -266,32 +236,17 @@ class IntpDataset(Dataset):
             df = self.total_df_dict[scene]
             #     - get a random call_item, those remained are story
             all_candidate = df[df['op']=='mcpm10']
-            # all_candidate: (43, 6)
 
             # only get random set for training set
             random_row = all_candidate.loc[random_index]
             call_item = pd.DataFrame([random_row], index=[random_index])
             remaining_candidate = all_candidate.drop(random_index)
-            # remaining_candidate: (42, 6)
-
-            # rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
-            # df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
-            # print(rest_story.empty)
-            # True
 
             # only pm10 
             df_story = remaining_candidate
-
             aux_story = df.loc[(df['op'].isin(self.aux_op_dic.keys()))]
-
             rest_story = df.loc[(df['op'].isin(self.env_op_dic.keys()))]
 
-
-
-        #  6 for op,thing,x,y,result,result_norm
-        # remain_candidate: (42, 6)
-        # rest_story: (154, 6)
-        # df_story_other_features: (196, 6)
 
         elif self.call_name in ['test', 'eval']:
             # for Early Stopping set and Final Evaluation set
@@ -303,17 +258,13 @@ class IntpDataset(Dataset):
             all_candidate = df[df['op']=='mcpm10']
             # get the target station
 
-
             call_item = df[df['op']==f's_label_{target}']
 
             if len(call_item) != 1:
                 call_item = call_item[0]
 
             df_story = df.loc[df['op'].isin(self.primary_op.keys())]
-
-            # eval don't need aux_task, primary task only
-            aux_story = None
-
+            aux_story = df.loc[(df['op'].isin(self.aux_op_dic.keys()))]
             rest_story = df.loc[(df['op'].isin(self.env_op_dic.keys()))]
             
         elif self.call_name == 'train_self':
@@ -325,34 +276,13 @@ class IntpDataset(Dataset):
             df = self.total_df_dict[scene]
             #     - get a random call_item, those remianed are story
             all_candidate = df[df['op']=='mcpm10']
-
             random_row = all_candidate.loc[random_index]
             call_item = pd.DataFrame([random_row], index=[random_index])
             remaining_candidate = all_candidate.drop(random_index)
 
-            # rest_story = df.loc[(df['op'].isin(self.op_dic.keys())) & (df['op']!='mcpm10')]
-            # concat nothing
-            # df_story = pd.concat([remaining_candidate, rest_story], axis=0, ignore_index=True)
-
             df_story = remaining_candidate
             aux_story = df.loc[(df['op'].isin(self.aux_op_dic.keys()))]
             rest_story = df.loc[(df['op'].isin(self.env_op_dic.keys()))]
-
-
-        # get graph candidates
-        if self.call_name in ['train', 'train_self']:
-            graph_candidates = all_candidate[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
-
-
-        elif self.call_name in ['test', 'eval']:
-            graph_candidates_1 = df[df['op'] == f's_label_{self.call_list[idx][1]}'][['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
-            graph_candidates_2 = all_candidate[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
-            graph_candidates = pd.concat([graph_candidates_1, graph_candidates_2], axis=0)
-
-    # #     - get pm10's coordinates and answers
-    #     coords = torch.from_numpy(graph_candidates[['Longitude', 'Latitude']].values).float()
-    #     answers = torch.from_numpy(graph_candidates[['Result_norm']].values).float()
-
 
         # processing scenario information:
         #     - mask out all readings within 'mask_distance'
@@ -361,130 +291,113 @@ class IntpDataset(Dataset):
         else:
             this_mask = self.mask_distance
 
-        # df_story = remaining_candidate
+        # _________________________________________aggregation_______________________________________________________
         # only pm10
-        # TODO: Need Test
+
         df_filtered = df_story.loc[(abs(df_story['Longitude'] - call_item.iloc[0, 2]) + abs(df_story['Latitude'] - call_item.iloc[0, 3])) >= this_mask, :].copy()
         df_filtered = df_filtered.drop(columns=['Result'])
         #     - generate story token serie [value, rank, loc_x, loc_y, op]
         df_filtered = df_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
         aggregated_df = df_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
 
-        print(f'aggregated_df: {aggregated_df.shape}')
 
-        #     - get pm10's coordinates and answers
-        coords = torch.from_numpy(aggregated_df[['Longitude', 'Latitude']].values).float()
-        answers = torch.from_numpy(aggregated_df[['Result_norm']].values).float()
+        # other aux_pms
+        aux_filtered = aux_story.drop(columns=['Result'])
+        # - generate story token serie [value, rank, loc_x, loc_y, op]
+        aux_filtered = aux_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
+        aggregated_aux = aux_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
 
 
-        # _________________________________________features_______________________________________________________
+        # # processing rest features:
+        env_filtered = rest_story.drop(columns=['Result'])
+        #     - generate story token serie [value, rank, loc_x, loc_y, op]
+        env_filtered = env_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
+        aggregated_env = env_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
+
+
+        # _________________________________________get task graph_candidate for target pm_______________________________________________________
+        if self.call_name in ['train', 'train_self']:
+            graph_candidates = aggregated_df[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
+
+        elif self.call_name in ['test', 'eval']:
+            graph_candidates_1 = aggregated_df[aggregated_df['op'] == f's_label_{self.call_list[idx][1]}'][
+                ['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
+            graph_candidates_2 = aggregated_df[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']].copy()
+            graph_candidates = pd.concat([graph_candidates_1, graph_candidates_2], axis=0)
+
+        # _________________________________________target_task_______________________________________________________
+    #     - get pm10's coordinates and answers
+        coords = torch.from_numpy(graph_candidates[['Longitude', 'Latitude']].values).float()
+        answers = torch.from_numpy(graph_candidates[['Result_norm']].values).float()
+
         # same sequence
-        features_df = aggregated_df[['Result_norm', 'Thing']]
-
-
+        features_df = graph_candidates[['Result_norm', 'Thing']]
         # only the result of (norm_value of mcpm10/s_label, thing/3)
         features = torch.from_numpy(features_df.to_numpy()).float()
 
-        print(f'features: {features.shape}, \n ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ \n'
-              f'features_df: {features_df.shape}')
-
-
-        # for op in self.primary_op_list:
-        #     aggregated_df_op = aggregated_df[aggregated_df['op']==op]
-        #     #             no more interpolation
-        #     interpolated_grid = torch.zeros((len(graph_candidates), 1))
-        #     if len(aggregated_df_op) != 0:
-        #         # xi = graph_candidates['Longitude'].values
-        #         # yi = graph_candidates['Latitude'].values
-        #         # x = aggregated_df_op['Longitude'].values
-        #         # y = aggregated_df_op['Latitude'].values
-        #         values = aggregated_df_op['Result_norm'].values
-        #         # interpolated_values = self.idw_interpolation(x, y, values, xi, yi)
-        #         # no interpolation
-        #         interpolated_values = self.idw_interpolation(x, y, values, xi, yi)
-        #         interpolated_grid = torch.from_numpy(interpolated_values).reshape((len(graph_candidates), 1))
-        #         features[:, self.primary_op[op]:self.primary_op[op] + 1] = interpolated_grid
-        #
-        #     conditions = (graph_candidates['op'] == 'mcpm10') | (
-        #                 graph_candidates['op'] == f's_label_{self.call_list[idx][1]}')
-        #     features[:, -1] = torch.from_numpy(
-        #         np.where(conditions, graph_candidates['Thing'] / 3, (self.lowest_rank - 1) / 3))
-
         # _________________________________________aux_task_______________________________________________________
-        if aux_story is not None:
-            aux_filtered = aux_story.drop(columns=['Result'])
-            #     - generate story token serie [value, rank, loc_x, loc_y, op]
-            aux_filtered = aux_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
-            aggregated_aux = aux_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
+        # (#aux_task, norm_value)
+        aux_answers = torch.zeros(self.task_num, len(graph_candidates), dtype = torch.float)
 
-        # (#aux_task, norm_value, thing/3)
-        aux_features = torch.zeros(len(self.env_op_dic), len(features_df), 2)
-        aux_answers = torch.zeros(self.task_num, len(features_df), 1)
+        for op_index, aux_op in enumerate(self.aux_op_list):
+            aggregated_aux_op = aggregated_aux[aggregated_aux['op'] == aux_op]
+            # log the aux_op and keep the sequence with aggregated_df
 
-        if aux_story is not None:
-            for op_index, aux_op in enumerate(self.aux_op_list):
-                aggregated_aux_op = aggregated_aux[aggregated_aux['op'] == aux_op]
-                # log the aux_op and keep the sequence with aggregated_df
+            # print(f'aggregated_aux_op: {aggregated_aux_op}')
+            # print('-------------------------------')
 
-                for features_df_index, row in aggregated_df.iterrows():
-                    xi = row['Longitude'].values
-                    yi = row['Latitude'].values
-                    matched_aux = aggregated_aux_op[(aggregated_aux_op['Longitude'] == xi) & (aggregated_aux_op['Latitude'] == yi)]
 
-                    if(not matched_aux.empty):
-                        aux_features[op_index, features_df_index] = matched_aux[['Result_norm', 'Thing']].values
-                        aux_answers[op_index, features_df_index] = matched_aux['Result_norm']
-                    else:
-                        # choose -1 as our Masked value
-                        aux_features[op_index, features_df_index] = [-1, -1]
+            for features_df_index, row in graph_candidates.iterrows():
+                xi = row['Longitude']
+                yi = row['Latitude']
 
-                aux_features= torch.from_numpy(aux_features.to_numpy()).float()
-                aux_answers = torch.from_numpy(aux_answers.to_numpy()).float()
+                # after aggregation, one postion have maximal one value for each aux_op
+                matched_aux = aggregated_aux_op[
+                    (aggregated_aux_op['Longitude'] == xi) & (aggregated_aux_op['Latitude'] == yi)]
 
-        else:
-            aux_features = None
-            aux_answers = None
+                if (not matched_aux.empty and matched_aux.shape[0] == 1):
+                    assigned_value = matched_aux['Result_norm'].values[0]
+                    aux_answers[op_index, features_df_index] = assigned_value
+                else:
+                    # choose -1 as our Masked value
+                    assigned_value = -1
+                    aux_answers[op_index, features_df_index] = assigned_value
 
+                # print(f'row: {row} \n ------------- \n xi: {xi} yi:{yi} \n value:{assigned_value}')
 
         # _________________________________________env_features_______________________________________________________
-        # # processing rest features:
-        rs_filtered = rest_story.drop(columns=['Result'])
-        #     - generate story token serie [value, rank, loc_x, loc_y, op]
-        rs_filtered = rs_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
-
-
-        df_one_hot = pd.get_dummies(rs_filtered, columns=['op'])
-        # in the order of regular one_hot df
-        # need to be changed to automatically fit the column name
-        required_ops = ['op_globalrad', 'op_hur', 'op_mcpm2p5', 'op_plev', 'op_precip', 'op_ta', 'op_wsx', 'op_wsy']
+        df_one_hot = pd.get_dummies(aggregated_env, columns=['op'])
+        required_ops = self.env_op_list
         # check if all the other_features are contained, if not insert the corresponding one-hot row
 
-        self.need_reorder = False
         for op in required_ops:
             if op not in df_one_hot.columns:
-                self.need_reorder = True
                 df_one_hot[op] = 0
+
         # reorder the columns
-        non_op_columns = [col for col in df_one_hot.columns if not col.startswith('op')]
+        non_op_columns = ['Longitude', 'Latitude', 'Result_norm', 'Thing']
         ordered_columns = non_op_columns + required_ops
-        df_one_hot = df_one_hot[ordered_columns]
+
+        df_one_hot.reindex(columns=ordered_columns)
 
         # make one hot in int form
         df_one_hot *= 1
         rest_feature = torch.tensor(df_one_hot.values).float()
 
-        return features, coords, answers, aux_features, aux_answers, rest_feature,
+        return features, coords, answers, aux_answers, rest_feature,
 
 
 # collate_fn: how samples are batched together
 def collate_fn(examples):
     input_lenths = torch.tensor([len(ex[0]) for ex in examples if len(ex[0]) > 2])
+
     x_b = pad_sequence([ex[0] for ex in examples if len(ex[0]) > 2], batch_first=True, padding_value=0.0)
     c_b = pad_sequence([ex[1] for ex in examples if len(ex[1]) > 2], batch_first=True, padding_value=0.0)
     y_b = pad_sequence([ex[2] for ex in examples if len(ex[2]) > 2], batch_first=True, padding_value=0.0)
 
-    aux_feature = pad_sequence([ex[3] for ex in examples if len(ex[1]) > 2], batch_first=True, padding_value=0.0)
-    aux_answers = pad_sequence([ex[4] for ex in examples if len(ex[2]) > 2], batch_first=True, padding_value=0.0)
-    rest_feature = pad_sequence([ex[5] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
+    # TODO: need extra operation
+    aux_y_b = pad_sequence([ex[3] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
 
-    return x_b, c_b, y_b, aux_feature, aux_answers, input_lenths, rest_feature
+    rest_feature = pad_sequence([ex[4] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
+
+    return x_b, c_b, y_b, aux_y_b, input_lenths, rest_feature
