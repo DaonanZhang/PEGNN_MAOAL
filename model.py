@@ -455,7 +455,9 @@ class PEGCN(nn.Module):
         else:
             output_head = extract_first_element_per_batch(output, indexer)
             target_head = extract_first_element_per_batch(y_l, indexer)
-            return output_head, target_head
+            aux_output_head = [extract_first_element_per_batch(aux_output, indexer) for aux_output in aux_outputs]
+            aux_target_head = [extract_first_element_per_batch(aux_y_l, indexer) for aux_y_l in aux_y_ls]
+            return output_head, target_head, aux_output_head, aux_target_head
 
     #     calculate the loss
     def bmc_loss(self, pred, target):

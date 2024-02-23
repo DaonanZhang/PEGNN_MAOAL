@@ -121,8 +121,9 @@ if __name__ == '__main__':
 
         'env_op_dic': {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6, 'ncpm1':7, 'ncpm2p5': 8},
 
-        'hyper': {'lr': 0.001, 'decay': 0.0}
+        'hyper': {'lr': 0.001, 'decay': 0.0},
 
+        'aux_weight': 0.1
     }
 
     # build working folder
@@ -135,8 +136,6 @@ if __name__ == '__main__':
     build_folder_and_clean(coffer_slot)
 
     settings['coffer_slot'] = coffer_slot
-
-
 
 
     if 'Dataset_res250' in settings['origin_path'] or 'LUFT_res250' in settings['origin_path']:

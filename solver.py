@@ -52,7 +52,6 @@ def map_param_to_block(shared_params):
 class hypermodel(nn.Module):
     def __init__(self, task_num, module_num, param_to_block):
 
-        # 替换target grad 参考aux grad 替换成新的考虑aux grad 的新的梯度
         super(hypermodel, self).__init__()
         self.task_num = task_num
         self.module_num = module_num
@@ -104,7 +103,6 @@ def bmc_loss(pred, target, noise_var, device):
     # loss = loss * (2 * noise_var).detach()  # optional: restore the loss scale, 'detach' when noise is learnable 
     return loss
 
-# lack of the file: support_functions.py !!
 
 
 from gauxlearn.optim import MetaOptimizer
@@ -183,7 +181,6 @@ def training(settings, job_id):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=settings['nn_lr'])
 
-    # Added part MAOAL
     # TODO: add MAOAL
     m_optimizer = optim.SGD( modular.parameters(), lr = settings['hyper']['lr'], momentum = 0.9, weight_decay = settings['hyper']['decay'] )
     meta_optimizer = MetaOptimizer(meta_optimizer= m_optimizer, hpo_lr = 1.0, truncate_iter = 3, max_grad_norm = 10)
@@ -204,6 +201,10 @@ def training(settings, job_id):
     iter_counter = 0
     inter_loss = 0
     mini_loss = 0
+
+    aux_iter_loss = [0] * settings['aux_task_num']
+    aux_mini_loss = [0] * settings['aux_task_num']
+
     data_iter = iter(dataloader_tr)
 
     t_train_iter_start = time.time()
@@ -226,14 +227,15 @@ def training(settings, job_id):
             data_iter = iter(dataloader_tr)
             batch = next(data_iter)
 
-        x_b, c_b, y_b, aux_feature, aux_answers, input_lengths, rest_features = batch
-        x_b, c_b, y_b, aux_feature, aux_answers, input_lengths, rest_features = x_b.to(device), c_b.to(device), \
-                                                                              y_b.to(device), aux_feature.to(device), \
-                                                                              aux_answers.to(device), input_lengths.to(device), \
+        x_b, c_b, y_b, aux_y_b, input_lengths, rest_features = batch
+        x_b, c_b, y_b, aux_y_b, input_lengths, rest_features = x_b.to(device), c_b.to(device), \
+                                                                              y_b.to(device), \
+                                                                              aux_y_b.to(device), input_lengths.to(device), \
                                                                                 rest_features.to(device)
 
         # forward propagation
-        outputs_b, targets_b = model(inputs = x_b, target = y_b, coords = c_b, input_lengths = input_lengths, rest_features = rest_features, head_only= True, aux_feature = aux_feature, aux_answers = aux_answers)
+        outputs_b, targets_b, aux_outputs_b, aux_targets_b = model(inputs = x_b, target = y_b, coords = c_b, input_lengths = input_lengths,
+                                     rest_features = rest_features, head_only= True, aux_answers = aux_y_b)
 
 
         # print(f'outputs_b:{outputs_b.shape}')
@@ -246,23 +248,51 @@ def training(settings, job_id):
 
         inter_loss += primary_loss.item()
         mini_loss += primary_loss.item()
-        # backward propagation
-        primary_loss.backward()
 
+        # backward propagation
+        # primary_loss.backward()
+
+        # # -----------------aux_loss-----------------
+        aux_loss_list = []
+        for aux_output, aux_target in zip(aux_outputs_b, aux_targets_b):
+            aux_loss = loss_func(aux_output, aux_target)
+            aux_loss_list.append(aux_loss * settings['aux_loss_weight'] / settings['accumulation_steps'])
+
+        for i in range(0 ,settings['aux_task_num'] - 1):
+            aux_iter_loss[i] += aux_loss_list[i].item()
+            aux_mini_loss[i] += aux_loss_list[i].item()
+
+        # -----------------opt.step-----------------
         if (iter_counter+1) % settings['accumulation_steps'] == 0:
-            optimizer.step()
+            # optimizer.step()
+            # optimizer.zero_grad()
+
+            # -----------------MAOAL-----------------
+            loss_list = [mini_loss] + aux_mini_loss
+            common_grads = modular(loss_list, shared_parameters, whether_single=0)
+            loss_vec = torch.stack(loss_list)
+            total_loss = torch.sum(loss_vec)
             optimizer.zero_grad()
+            total_loss.backward()
+
+            for p, g in zip(shared_parameters, common_grads):
+                p.grad = g
+
+            optimizer.step()
+            del common_grads
+
+            # -----------------log-----------------
             t_train_iter_end = time.time()
             print(f'\tIter {real_iter} - Loss: {mini_loss} - real_iter_time: {t_train_iter_end - t_train_iter_start}', end="\r", flush=True)
+
+            # -----------------reset-----------------
             mini_loss = 0
+            aux_mini_loss = [0] * settings['aux_task_num']
             t_train_iter_start = t_train_iter_end
         iter_counter += 1
 
-
+        # -----------------test batch-----------------
         print((iter_counter+1) % (settings['test_batch'] * settings['accumulation_steps']))
-
-
-        # Test batch
         # only log for after finish a full_batch
         if (iter_counter+1) % (settings['test_batch'] * settings['accumulation_steps']) == 0:
             model.eval()
@@ -374,7 +404,6 @@ def evaluate(settings, job_id):
     
     if ngpu > 1:
         model = torch.nn.DataParallel(model, device_ids=device_list)
-
 
     model.load_state_dict(torch.load(coffer_dir + "best_params"))
 

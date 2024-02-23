@@ -33,7 +33,7 @@ class IntpDataset(Dataset):
         self.call_name = call_name
         self.debug = settings['debug']
 
-        self.task_num = settings['aux_task_num']
+        self.aux_task_num = settings['aux_task_num']
 
         # load norm info, std, mean
         with open(self.origin_path + f'Folds_Info/norm_{self.time_fold}.info', 'rb') as f:
@@ -193,7 +193,7 @@ class IntpDataset(Dataset):
         df = self.norm(d=df)
         return filename, df
 
-    # normalize all values
+    # normalize all values and the thing
     def norm(self, d):
         d_list = []
         for op in d['op'].unique():
@@ -300,7 +300,6 @@ class IntpDataset(Dataset):
         df_filtered = df_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
         aggregated_df = df_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
 
-
         # other aux_pms
         aux_filtered = aux_story.drop(columns=['Result'])
         # - generate story token serie [value, rank, loc_x, loc_y, op]
@@ -313,6 +312,14 @@ class IntpDataset(Dataset):
         #     - generate story token serie [value, rank, loc_x, loc_y, op]
         env_filtered = env_filtered[['Result_norm', 'Thing', 'Longitude', 'Latitude', 'op']]
         aggregated_env = env_filtered.groupby(['Longitude', 'Latitude', 'op']).mean().reset_index()
+
+
+        # has_nan = aggregated_df['Result_norm'].isnull().any()
+        # print(f'pm10 nan: {has_nan}')
+        # has_nan = aggregated_aux['Result_norm'].isnull().any()
+        # print(f'aux nan: {has_nan}')
+        # has_nan = aggregated_env['Result_norm'].isnull().any()
+        # print(f'env nan: {has_nan}')
 
 
         # _________________________________________get task graph_candidate for target pm_______________________________________________________
@@ -337,17 +344,17 @@ class IntpDataset(Dataset):
 
         # _________________________________________aux_task_______________________________________________________
         # (#aux_task, norm_value)
-        aux_answers = torch.zeros(self.task_num, len(graph_candidates), dtype = torch.float)
+        aux_answers = torch.zeros(self.aux_task_num, len(graph_candidates), dtype = torch.float)
 
         for op_index, aux_op in enumerate(self.aux_op_list):
             aggregated_aux_op = aggregated_aux[aggregated_aux['op'] == aux_op]
-            # log the aux_op and keep the sequence with aggregated_df
-
-            # print(f'aggregated_aux_op: {aggregated_aux_op}')
-            # print('-------------------------------')
-
 
             for features_df_index, row in graph_candidates.iterrows():
+
+                # log the aux_op and keep the sequence with aggregated_df
+                # print(f'aggregated_aux_op: {aggregated_aux_op}')
+                # print('-------------------------------')
+
                 xi = row['Longitude']
                 yi = row['Latitude']
 
@@ -363,7 +370,8 @@ class IntpDataset(Dataset):
                     assigned_value = -1
                     aux_answers[op_index, features_df_index] = assigned_value
 
-                # print(f'row: {row} \n ------------- \n xi: {xi} yi:{yi} \n value:{assigned_value}')
+                # print(f'row: {row} \n ------------- \n xi: {xi} yi:{yi} \n value:{assigned_value} {aux_op}')
+                # print('-------------------------------')
 
         # _________________________________________env_features_______________________________________________________
         df_one_hot = pd.get_dummies(aggregated_env, columns=['op'])
@@ -384,7 +392,7 @@ class IntpDataset(Dataset):
         df_one_hot *= 1
         rest_feature = torch.tensor(df_one_hot.values).float()
 
-        return features, coords, answers, aux_answers, rest_feature,
+        return features, coords, answers, aux_answers, rest_feature
 
 
 # collate_fn: how samples are batched together
@@ -395,8 +403,11 @@ def collate_fn(examples):
     c_b = pad_sequence([ex[1] for ex in examples if len(ex[1]) > 2], batch_first=True, padding_value=0.0)
     y_b = pad_sequence([ex[2] for ex in examples if len(ex[2]) > 2], batch_first=True, padding_value=0.0)
 
-    # TODO: need extra operation
-    aux_y_b = pad_sequence([ex[3] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
+    aux_y_b = []
+
+    task_num = examples[0][3].shape[0]
+    for i in range(0, task_num - 1):
+        aux_y_b.append(pad_sequence([ex[3][i] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0))
 
     rest_feature = pad_sequence([ex[4] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
 
