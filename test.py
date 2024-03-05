@@ -71,9 +71,9 @@ if __name__ == '__main__':
         'bp': False,
 
 
-        'batch': 32,
-        'full_batch': 128,
-        'accumulation_steps': 128 // 32,
+        'batch': 8,
+        'full_batch': 32,
+        'accumulation_steps': 32 // 8,
 
         'nn_lr': 1e-5,
         'emb_dim': 16,
@@ -101,29 +101,22 @@ if __name__ == '__main__':
         'nn_hidden_dim': 32,
         'dropout_rate': 0.1,
 
-
         # for transformer
-        'd_model': 13,
-        'nhead': 13,
+        'd_model': 256,
+        'nhead': 8,
         'dim_feedforward': 1024,
         'transformer_dropout': 0.1,
         'num_encoder_layers': 3,
 
-
         'aux_task_num': 3,
-
-        # if task_head_ use mffn
-        # 'task_head_nn_length': 3,
-        # 'task_head_nn_hidden_dim': 32,
-        # 'task_head_dropout_rate': 0.1,
 
         'aux_op_dic': {'mcpm1': 0, 'mcpm2p5': 1, 'mcpm4': 2},
 
-        'env_op_dic': {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6, 'ncpm1':7, 'ncpm2p5': 8},
+        'env_op_dic': {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6},
 
-        'hyper': {'lr': 0.001, 'decay': 0.0},
+        'hyper': {'lr': 0.001, 'decay': 0.0, 'pre': 50, 'interval': 10,'aux_loss_weight': 0.001},
 
-        'aux_weight': 0.1
+        'heads': {'nn_length': 3, 'nn_hidden_dim': 64, 'dropout_rate': 0.1},
     }
 
     # build working folder

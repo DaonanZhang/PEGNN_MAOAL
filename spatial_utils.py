@@ -1,6 +1,8 @@
 import math
 import torch
 import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 # Helper function for 2+d distance
@@ -22,3 +24,18 @@ def makeEdgeWeight(x, edge_index):
     edge_weight = (max_val - distances) / rng
     
     return edge_weight
+
+class MaskedMSELoss(nn.Module):
+    def __init__(self):
+        super(MaskedMSELoss, self).__init__()
+
+    def forward(self, pred, target):
+        mask = target != -1
+        masked_input = pred[mask]
+        masked_target = target[mask]
+
+        if masked_input.numel() == 0 or masked_target.numel() == 0:
+            return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
+
+        loss = F.mse_loss(masked_input, masked_target, reduction='mean')
+        return loss

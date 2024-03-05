@@ -61,7 +61,7 @@ train_script_name = 'Trainer.py'
 # define custom sweep hyperparameters
 #     - how many sweeps do you want to run in total
 # 243 combinations for total_sweep
-total_sweep = 243
+total_sweep = 54
 #     - how many sweeps do you want to run parallelly
 pool_size = 40
 
@@ -83,19 +83,20 @@ sweep_config['metric'] = metric
 #     - parameters search range definition
 parameters_dict = {
     'full_batch': {
-        'values': [128, 256, 512]
+        'values': [128, 256]
     },
     'lr': {
-        'values': [1e-3, 1e-4, 1e-5]
+        'values': [1e-4, 1e-5, 1e-6]
     },
+
     'emb_dim': {
         'values': [16, 32, 64]
     },
-    'k': {
-        'values': [5, 10, 20]
-    },
+
     'conv_dim': {
         'values': [128, 256, 512]
     },
+
+
 }
 sweep_config['parameters'] = parameters_dict

@@ -49,9 +49,9 @@ def wrap_task(config=None):
         config['nn_lr'] = config['lr']
         config['es_mindelta'] = 0.5
         config['es_endure'] = 30
-
-        # config['num_features_in'] = 10
         config['num_features_in'] = 2
+
+        config['k'] = 20
 
         config['num_features_out'] = 1
         config['emb_hidden_dim'] = config['emb_dim'] * 4
@@ -62,8 +62,28 @@ def wrap_task(config=None):
         config['fold'] = 0
         config['holdout'] = [0, 1]
         config['lowest_rank'] = 1
-        
-        # wait until available pipe slot
+
+        config['hp_marker'] = 'tuned'
+        config['nn_length'] = 3
+        config['nn_hidden_dim'] = 32
+        config['dropout_rate'] = 0.1
+
+        config['aux_task_num'] = 3
+
+        # for transformer
+        config['d_model'] = 256
+        config['nhead'] = 8
+        config['dim_feedforward'] = 1024
+        config['transformer_dropout'] = 0.1
+        config['num_encoder_layers'] = 3
+
+        config['aux_op_dic'] =  {'mcpm1': 0, 'mcpm2p5': 1, 'mcpm4': 2}
+
+        config['env_op_dic'] = {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6, 'ncpm1':7, 'ncpm2p5': 8}
+
+        config['hyper'] = {'lr': 0.001, 'decay': 0.0, 'pre': 0, 'interval': 10,'aux_loss_weight': 0.01}
+
+        config['heads'] =  {'nn_length': 3, 'nn_hidden_dim': 64, 'dropout_rate': 0.1},
 
         # §§ slurm command: squeue
         while True:

@@ -235,6 +235,8 @@ class MultiLayerFeedForwardNN(nn.Module):
                                                    skip_connection=False,
                                                    context_str=self.context_str))
 
+
+
     def forward(self, input_tensor):
         '''
         Args:
@@ -276,6 +278,7 @@ class SpatialEncoder(nn.Module):
         self.nn_length = settings['nn_length']
         self.nn_hidden_dim = settings['nn_hidden_dim']
         if self.ffn is not None:
+            # by creating the ffn, the weights are initialized use kaiming_init
             self.ffn = MultiLayerFeedForwardNN(self.input_embed_dim, spa_embed_dim,
                                                num_hidden_layers=settings['nn_length'],
                                                hidden_dim=settings['nn_hidden_dim'],
@@ -314,6 +317,7 @@ class PEGCN(nn.Module):
         self.k = k
         self.nn_length = settings['nn_length']
         self.nn_hidden_dim = settings['nn_hidden_dim']
+        self.aux_task_num = settings['aux_task_num']
 
         self.spenc = SpatialEncoder(
             spa_embed_dim=emb_hidden_dim, ffn=True, settings=settings
@@ -330,9 +334,11 @@ class PEGCN(nn.Module):
 
         # feature dim:12
         # self.inc_transformer = nn.Linear(12, settings['d_model'])
-        self.encoder_layers = TransformerEncoderLayer(settings['d_model'], settings['nhead'],
+        # 13 = 12 features for rest features and 1 for Q
+        self.inc = nn.Linear(in_features=12, out_features=settings['d_model'])
+        encoder_layers = TransformerEncoderLayer(settings['d_model'], settings['nhead'],
                                                       settings['dim_feedforward'], settings['transformer_dropout'], batch_first=True)
-        self.transformer_encoder = TransformerEncoder(self.encoder_layers, settings['num_encoder_layers'])
+        self.transformer_encoder = TransformerEncoder(encoder_layers, settings['num_encoder_layers'])
 
         # x_l + emb_l + q_l
         self.conv1 = GCNConv(num_features_in + emb_dim + 1, conv_dim)
@@ -344,10 +350,14 @@ class PEGCN(nn.Module):
         self.task_heads = nn.ModuleList()
 
         for i in range(0, aux_task_num + 1):
-            head = nn.Linear(conv_dim, num_features_out)
+            head = MultiLayerFeedForwardNN(input_dim=conv_dim, output_dim=num_features_out,
+                                    num_hidden_layers=settings['heads']['nn_length'],
+                                    hidden_dim=settings['heads']['nn_hidden_dim'],
+                                    dropout_rate=settings['heads']['dropout_rate'],)
             self.task_heads.append(head)
+        #     already use kaiming_init by creating
 
-        self.noise_sigma = torch.nn.Parameter(torch.tensor([0.1, ], device=self.device))
+        # self.noise_sigma = torch.nn.Parameter(torch.tensor([0.1, ], device=self.device))
 
 
         self.Q = None
@@ -364,18 +374,12 @@ class PEGCN(nn.Module):
             if p.dim() > 1:
                 torch.nn.init.kaiming_normal_(p)
         # torch.nn.init.kaiming_normal_(self.fc.weight)
+        # torch.nn.init.kaiming_normal_(self.task_heads[0].weight)
 
-        torch.nn.init.kaiming_normal_(self.task_heads[0].weight)
-
-    def forward(self, inputs, targets, coords, input_lengths, rest_features, head_only, aux_answers):
+    def forward(self, inputs, targets, aux_answers, coords, input_lengths, rest_features, head_only):
 
         # inputs.shape x: torch.Size([32, 43, 2])
         # 2: (value, rank)
-
-        # targets.shape y: torch.Size([32, 43, 1])
-        # coords.shape  c: torch.Size([32, 43, 2])
-        # coords = torch.from_numpy(graph_candidates[['Longitude', 'Latitude']].values).float()
-        # answers = torch.from_numpy(graph_candidates[['Result_norm']].values).float()
 
         # input_lenths.shape: torch.Size([32])
         # batch_size
@@ -383,9 +387,6 @@ class PEGCN(nn.Module):
         # rest_features.shape = torch.Size([32, 187, 12])
         # self.Q.shape = torch.Size([32, 187, 1])
         # rest_feature_Q.shape = torch.Size([32, 187, 13])
-
-        print(f'{aux_answers.shape} aux_answers')
-
 
         # ________________________________________postional encoding_______________________________________________________
         emb = self.spenc(coords)
@@ -396,8 +397,14 @@ class PEGCN(nn.Module):
         # emb_l.shape after padding: torch.Size([1376, 16])
 
         # _________________________________________env_features_______________________________________________________
+
         self.Q = torch.nn.Parameter(torch.ones(rest_features.shape[0], rest_features.shape[1], 1, device=self.device))
+
         rest_feature_Q = torch.cat([self.Q, rest_features], dim=2)
+        # rest_feature_Q.shape after concat: torch.Size([8, 175, 12])
+
+        rest_feature_Q = self.inc(rest_feature_Q)
+
         feature_emb = self.transformer_encoder(rest_feature_Q)
 
         Q_feature_emb = feature_emb[:,:, 0]
@@ -423,7 +430,6 @@ class PEGCN(nn.Module):
 
         # concat the embedding with the input
         x = torch.cat((x_l, emb_l, q_l), dim=1)
-        # x.shape_ after concat: torch.Size([1376, 30])
         # => 19 = 2 x_l + 16 pe + 1 q_l
         # x.shape_ after concat: torch.Size([1509, 19])
 
@@ -436,41 +442,67 @@ class PEGCN(nn.Module):
         y_l, _ = padded_seq_to_vectors(targets, input_lengths)
         # y_l.shape after padding: torch.Size([1376, 1])
 
-        # _____________________________________Aux_outputs_____________________________________
-        aux_outputs = []
+        # _____________________________________Aux_answers_____________________________________
+        # length = 3
         aux_y_ls = []
+        for i in range(0, self.aux_task_num):
+            aux_y_l, _ = padded_seq_to_vectors(aux_answers[i], input_lengths)
+            aux_y_ls.append(aux_y_l)
 
-        for i in range(1, len(self.task_heads)):
+            # aux_y_l.shape: torch.Size([398, 1])
+
+        # _____________________________________Aux_outputs_____________________________________
+        # length = 3
+        aux_outputs = []
+
+        # task_head[0] only for primary task
+        for i in range(1, self.aux_task_num + 1):
             aux_output = self.task_heads[i](h2)
             aux_outputs.append(aux_output)
 
-            # TODO: still have some problem for the aux_y_l
-            aux_y_l, _ = padded_seq_to_vectors(aux_answers[i, :], input_lengths)
-            aux_y_ls.append(aux_y_l)
-
 
         # the result of output and y_l, in order to compare the BMC bzw. lost function
+        # return loss now
         if not head_only:
+            # debug mode not calculate loss in model
             return output, y_l, aux_outputs, aux_y_ls
         else:
             output_head = extract_first_element_per_batch(output, indexer)
             target_head = extract_first_element_per_batch(y_l, indexer)
-            aux_output_head = [extract_first_element_per_batch(aux_output, indexer) for aux_output in aux_outputs]
-            aux_target_head = [extract_first_element_per_batch(aux_y_l, indexer) for aux_y_l in aux_y_ls]
-            return output_head, target_head, aux_output_head, aux_target_head
+            if len(self.task_heads) == 1:
+                aux_output_head = []
+                aux_target_head = []
+            else:
+                aux_output_head = [extract_first_element_per_batch(aux_output, indexer) for aux_output in aux_outputs]
+                aux_target_head = [extract_first_element_per_batch(aux_y_l, indexer) for aux_y_l in aux_y_ls]
 
-    #     calculate the loss
-    def bmc_loss(self, pred, target):
-        """Compute the Balanced MSE Loss (BMC) between `pred` and the ground truth `targets`.
-        Args:
-          pred: A float tensor of size [batch, 1].
-          target: A float tensor of size [batch, 1].
-          noise_var: A float number or tensor.
-        Returns:
-          loss: A float tensor. Balanced MSE Loss.
-        """
-        noise_var = self.noise_sigma ** 2
-        logits = - (pred - target.T).pow(2) / (2 * noise_var)  # logit size: [batch, batch]
-        loss = F.cross_entropy(logits, torch.arange(pred.shape[0]).to(self.device))  # contrastive-like loss
-        loss = loss * (2 * noise_var).detach()  # optional: restore the loss scale, 'detach' when noise is learnable
-        return loss
+
+            # print('output_head.shape:', output_head.shape)
+            # print('target_head.shape:', target_head.shape)
+            # print('aux_output_head.shape:', aux_output_head[0].shape)
+            # print('aux_target_head.shape:', aux_target_head[0].shape)
+
+            return output_head, target_head, aux_output_head, aux_target_head
+    #
+    # #     calculate the loss
+    # def bmc_loss(self, pred, target):
+    #     """Compute the Balanced MSE Loss (BMC) between `pred` and the ground truth `targets`.
+    #     Args:
+    #       pred: A float tensor of size [batch, 1].
+    #       target: A float tensor of size [batch, 1].
+    #       noise_var: A float number or tensor.
+    #     Returns:
+    #       loss: A float tensor. Balanced MSE Loss.
+    #     """
+    #
+    #     noise_var = self.noise_sigma ** 2
+    #     batch_size = pred.shape[0]
+    #
+    #     # MASK VALUE = -1 in Dataloader => -1 means doesn't exist
+    #     mask = (target != -1).float().squeeze()
+    #     logits = - (pred - target.T).pow(2) / (2 * noise_var)
+    #     logits_masked = logits * mask
+    #
+    #     loss = F.cross_entropy(logits_masked, torch.arange(batch_size).to(self.device))  # contrastive-like loss
+    #     loss = loss * (2 * noise_var).detach()  # optional: restore the loss scale, 'detach' when noise is learnable
+    #     return loss
