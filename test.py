@@ -70,7 +70,6 @@ if __name__ == '__main__':
         'debug': True,
         'bp': False,
 
-
         'batch': 8,
         'full_batch': 32,
         'accumulation_steps': 32 // 8,
@@ -103,10 +102,11 @@ if __name__ == '__main__':
 
         # for transformer
         'd_model': 256,
-        'nhead': 8,
+        'nhead': 4,
         'dim_feedforward': 1024,
         'transformer_dropout': 0.1,
         'num_encoder_layers': 3,
+        'num_MPL': 3,
 
         'aux_task_num': 3,
 
@@ -114,9 +114,12 @@ if __name__ == '__main__':
 
         'env_op_dic': {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6},
 
-        'hyper': {'lr': 0.001, 'decay': 0.0, 'pre': 50, 'interval': 10,'aux_loss_weight': 0.001},
+        'hyper': {'lr': 0.001, 'decay': 0.0, 'pre': -1, 'interval': 10,'aux_loss_weight': 0.01},
 
         'heads': {'nn_length': 3, 'nn_hidden_dim': 64, 'dropout_rate': 0.1},
+
+
+        'num_workers': 16,
     }
 
     # build working folder
@@ -131,9 +134,12 @@ if __name__ == '__main__':
     settings['coffer_slot'] = coffer_slot
 
 
-    if 'Dataset_res250' in settings['origin_path'] or 'LUFT_res250' in settings['origin_path']:
-        settings['tgt_op'] = 'mcpm10'
-    elif 'ERA_res250' in settings['origin_path']:
-        settings['tgt_op'] = 'soil_temperature_level_1'
+
+    settings['tgt_op'] = 'mcpm10'
+
+    # if 'Dataset_res250' in settings['origin_path'] or 'LUFT_res250' in settings['origin_path']:
+    #     settings['tgt_op'] = 'mcpm10'
+    # elif 'ERA_res250' in settings['origin_path']:
+    #     settings['tgt_op'] = 'soil_temperature_level_1'
 
     train(job_id, settings)

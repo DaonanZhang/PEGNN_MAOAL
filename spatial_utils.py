@@ -30,7 +30,8 @@ class MaskedMSELoss(nn.Module):
         super(MaskedMSELoss, self).__init__()
 
     def forward(self, pred, target):
-        mask = target != -1
+        mask_value = -float('inf')
+        mask = target != mask_value
         masked_input = pred[mask]
         masked_target = target[mask]
 

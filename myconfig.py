@@ -97,6 +97,5 @@ parameters_dict = {
         'values': [128, 256, 512]
     },
 
-
 }
 sweep_config['parameters'] = parameters_dict

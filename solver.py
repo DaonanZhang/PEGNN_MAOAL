@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sys
 from spatial_utils import MaskedMSELoss
+import psutil
 
 # in the slurm file
 # sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/Datasets')
@@ -39,7 +40,7 @@ def map_param_to_block(shared_params):
     for i, (name, param) in enumerate(shared_params):
         if 'spenc' or 'dec' in name:
             param_to_block[i] = 0
-        elif 'transformer' or 'inc' in name:
+        elif 'transformer' in name:
             param_to_block[i] = 1
         elif 'conv1' in name:
             param_to_block[i] = 2
@@ -153,16 +154,16 @@ def training(settings, job_id):
 
     # build dataloader
     dataset_train = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
-    dataloader_tr = torch.utils.data.DataLoader(dataset_train, batch_size=settings['batch'], shuffle=True, collate_fn=dl.collate_fn, num_workers=8, prefetch_factor=32, drop_last=True)
+    dataloader_tr = torch.utils.data.DataLoader(dataset_train, batch_size=settings['batch'], shuffle=True, collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32, drop_last=True)
 
     dataset_train2 = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
     dataloader_tr2 = torch.utils.data.DataLoader(dataset_train2, batch_size=settings['batch'], shuffle=True,
-                                                collate_fn=dl.collate_fn, num_workers=8, prefetch_factor=32,
+                                                collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32,
                                                 drop_last=True)
 
     aux_loader_train = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='aux')
     aux_loader_tr = torch.utils.data.DataLoader(aux_loader_train, batch_size=settings['batch'], shuffle=True,
-                                                collate_fn=dl.collate_fn, num_workers=8, prefetch_factor=32,
+                                                collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32,
                                                 drop_last=True)
 
     test_dataloaders = []
@@ -170,7 +171,7 @@ def training(settings, job_id):
         test_dataloaders.append(
             torch.utils.data.DataLoader(
                 dl.IntpDataset(settings=settings, mask_distance=mask_distance, call_name='test'),
-                batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers=4, prefetch_factor=32, drop_last=True
+                batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32, drop_last=True
             )
         )
 
@@ -241,11 +242,7 @@ def training(settings, job_id):
     t_train_iter_start = time.time()
 
 
-    # change while true to for loop and with tqdm
-    # while True:
-    print("***********************")
     print("working on training loop")
-    print("***********************")
 
     for i in range(epochs):
         # train 1 iteration
@@ -411,7 +408,14 @@ def training(settings, job_id):
             test_loss = torch.tensor(0., device=device)
 
             for dataloader_ex in test_dataloaders:
-                for x_b, c_b, y_b, aux_y_b, input_lengths, rest_features in dataloader_ex:
+
+                for test_batch in dataloader_ex:
+
+                    num_open_files_in_test = psutil.Process().num_fds()
+                    print(f"current open files {num_open_files_in_test} in test")
+                    sleep_for_open_too_many_files()
+
+                    x_b, c_b, y_b, aux_y_b, input_lengths, rest_features = test_batch
 
                     x_b, c_b, y_b, input_lengths, rest_features = x_b.to(device), c_b.to(device), y_b.to(
                         device), input_lengths.to(device), rest_features.to(device)
@@ -433,8 +437,11 @@ def training(settings, job_id):
             output = output.squeeze().detach().cpu()
             target = target.squeeze().detach().cpu()
 
-            test_means_origin = output * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
-            test_y_origin = target * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
+            # -----------------restore result-----------------
+            min_val = dic_op_minmax['mcpm10'][0]
+            max_val = dic_op_minmax['mcpm10'][1]
+            test_means_origin = output * (max_val - min_val) + min_val
+            test_y_origin = target * (max_val - min_val) + min_val
 
             mae = mean_squared_error(test_y_origin, test_means_origin, squared=False)
             r_squared = stats.pearsonr(test_y_origin, test_means_origin)
@@ -476,6 +483,13 @@ def training(settings, job_id):
     print("Elapsed: "+str(elapsed_time))
 
     return list_total, list_err
+
+def sleep_for_open_too_many_files():
+    while True:
+            num_open_files = psutil.Process().num_fds()
+            if num_open_files < 300:
+                break
+            time.sleep(10)
 
 
 # to evaluate the result of training
@@ -532,7 +546,7 @@ def evaluate(settings, job_id):
     for mask_distance in [0, 20, 50]:
         dataset_eval = dl.IntpDataset(settings=settings, mask_distance=mask_distance, call_name='eval')
 
-        dataloader_ev = torch.utils.data.DataLoader(dataset_eval, batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers=4, prefetch_factor=32, drop_last=True)
+        dataloader_ev = torch.utils.data.DataLoader(dataset_eval, batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32, drop_last=True)
 
         # Eval batch, where the print comes from
         model.eval()
@@ -556,11 +570,13 @@ def evaluate(settings, job_id):
         output = torch.cat(output_list).squeeze()
         target = torch.cat(target_list).squeeze()
 
-        test_means_origin = output * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
-        test_y_origin = target * dic_op_meanstd['mcpm10'][1] + dic_op_meanstd['mcpm10'][0]
+        # -----------------restore result-----------------
+        min_val = dic_op_minmax['mcpm10'][0]
+        max_val = dic_op_minmax['mcpm10'][1]
+        test_means_origin = output * (max_val - min_val) + min_val
+        test_y_origin = target * (max_val - min_val) + min_val
 
-
-        # Mean Absolute Error
+        # -----------------Mean Absolute Error-----------------
         mae = mean_squared_error(test_y_origin, test_means_origin, squared=False)
         r_squared = stats.pearsonr(test_y_origin, test_means_origin)
 

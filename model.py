@@ -300,6 +300,27 @@ class SpatialEncoder(nn.Module):
         else:
             return spr_embeds
 
+
+class Transformer_Encoder(nn.Module):
+    def __init__(self, settings):
+        super(Transformer_Encoder, self).__init__()
+
+        # Transformer inc
+        self.transformer_inc = nn.Linear(in_features=12, out_features=settings['d_model'])
+
+        # Transformer encoder
+        encoder_layers = TransformerEncoderLayer(settings['d_model'], settings['nhead'],
+                                                 settings['dim_feedforward'], settings['transformer_dropout'],
+                                                 batch_first=True)
+
+        self.transformer_encoder = TransformerEncoder(encoder_layers, settings['num_encoder_layers'])
+
+    def forward(self, x):
+        x = self.transformer_inc(x)
+        x = self.transformer_encoder(x)
+        return x
+
+
 class PEGCN(nn.Module):
 
     """
@@ -335,10 +356,18 @@ class PEGCN(nn.Module):
         # feature dim:12
         # self.inc_transformer = nn.Linear(12, settings['d_model'])
         # 13 = 12 features for rest features and 1 for Q
-        self.inc = nn.Linear(in_features=12, out_features=settings['d_model'])
-        encoder_layers = TransformerEncoderLayer(settings['d_model'], settings['nhead'],
-                                                      settings['dim_feedforward'], settings['transformer_dropout'], batch_first=True)
-        self.transformer_encoder = TransformerEncoder(encoder_layers, settings['num_encoder_layers'])
+
+        # self.transformer_inc = nn.Linear(in_features=12, out_features=settings['d_model'])
+        # encoder_layers = TransformerEncoderLayer(settings['d_model'], settings['nhead'],
+        #                                               settings['dim_feedforward'], settings['transformer_dropout'], batch_first=True)
+        # self.transformer_encoder = TransformerEncoder(encoder_layers, settings['num_encoder_layers'])
+
+        self.transformer_encoder = Transformer_Encoder(settings)
+
+        self.transformer_mlp = MultiLayerFeedForwardNN(input_dim=1, output_dim=1,
+                                                       num_hidden_layers=2,
+                                                       hidden_dim=settings['nn_hidden_dim'],
+                                                       dropout_rate=settings['dropout_rate'],)
 
         # x_l + emb_l + q_l
         self.conv1 = GCNConv(num_features_in + emb_dim + 1, conv_dim)
@@ -397,23 +426,20 @@ class PEGCN(nn.Module):
         # emb_l.shape after padding: torch.Size([1376, 16])
 
         # _________________________________________env_features_______________________________________________________
-
         self.Q = torch.nn.Parameter(torch.ones(rest_features.shape[0], rest_features.shape[1], 1, device=self.device))
-
         rest_feature_Q = torch.cat([self.Q, rest_features], dim=2)
         # rest_feature_Q.shape after concat: torch.Size([8, 175, 12])
-
-        rest_feature_Q = self.inc(rest_feature_Q)
+        # rest_feature_Q = self.transformer_inc(rest_feature_Q)
 
         feature_emb = self.transformer_encoder(rest_feature_Q)
-
         Q_feature_emb = feature_emb[:,:, 0]
         Q_feature_emb = Q_feature_emb.unsqueeze(-1)
-        # Q_feature_emb.shape = torch.Size([32, 212, 1])
 
+        Q_feature_emb = self.transformer_mlp(Q_feature_emb)
+
+        # Q_feature_emb.shape = torch.Size([32, 212, 1])
         q_l, _ = padded_seq_to_vectors(Q_feature_emb, input_lengths)
         # rest_featrues_l.shapetorch.Size([1509, 1])
-
         # _________________________________________features_______________________________________________________
         x_l, _ = padded_seq_to_vectors(inputs, input_lengths)
         # x_l_shape = torch.Size([1376, 2])
@@ -423,13 +449,16 @@ class PEGCN(nn.Module):
             last_element = x_l[:, -1].unsqueeze(-1)
             x_l = torch.cat([first_element, last_element], dim=-1)
 
-        edge_index = knn_graph(emb_l, k=self.k, batch=indexer)
+        # _________________________________________Build map_______________________________________________________
+        env_features = torch.concat((emb_l, q_l), dim = 1)
+
+        edge_index = knn_graph(env_features, k=self.k, batch=indexer)
         # edge_index.shape = torch.size([2, 29840])
-        edge_weight = makeEdgeWeight(emb_l, edge_index).to(self.device)
+        edge_weight = makeEdgeWeight(env_features, edge_index).to(self.device)
         # edge_weight.shape: torch.Size([27520])
 
         # concat the embedding with the input
-        x = torch.cat((x_l, emb_l, q_l), dim=1)
+        x = torch.cat((x_l, env_features), dim=1)
         # => 19 = 2 x_l + 16 pe + 1 q_l
         # x.shape_ after concat: torch.Size([1509, 19])
 

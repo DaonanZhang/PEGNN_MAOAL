@@ -43,15 +43,23 @@ def wrap_task(config=None):
         config['bp'] = False
         
         config['batch'] = 64
+
         config['accumulation_steps'] = config['full_batch'] // config['batch']
         config['epoch'] = 10000
         config['test_batch'] = 50
-        config['nn_lr'] = config['lr']
+
         config['es_mindelta'] = 0.5
         config['es_endure'] = 30
         config['num_features_in'] = 2
+        config['nn_lr'] = config['lr']
 
+        # -------------Best HP after first sweep----------------
+        config['full_batch'] = 128
         config['k'] = 20
+        config['lr'] = 1e-5
+        config['emb_dim'] = 16
+        config['conv_dim'] = 256
+
 
         config['num_features_out'] = 1
         config['emb_hidden_dim'] = config['emb_dim'] * 4
@@ -63,27 +71,37 @@ def wrap_task(config=None):
         config['holdout'] = [0, 1]
         config['lowest_rank'] = 1
 
+        # for hyperparameter tuning
         config['hp_marker'] = 'tuned'
         config['nn_length'] = 3
         config['nn_hidden_dim'] = 32
         config['dropout_rate'] = 0.1
-
         config['aux_task_num'] = 3
 
-        # for transformer
+        # -------------HP for Transformer----------------
         config['d_model'] = 256
-        config['nhead'] = 8
+        config['nhead'] = 4
         config['dim_feedforward'] = 1024
         config['transformer_dropout'] = 0.1
+
+            # -------------Need HP optimization----------------
         config['num_encoder_layers'] = 3
+        config['num_MPL'] = 3
+
+        # -------------nn_length and nn_hidden_dim Need HP optimization----------------
+        config['heads'] =  {'nn_length': 3, 'nn_hidden_dim': 64, 'dropout_rate': 0.1},
+
+
 
         config['aux_op_dic'] =  {'mcpm1': 0, 'mcpm2p5': 1, 'mcpm4': 2}
+        config['env_op_dic'] = {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6}
 
-        config['env_op_dic'] = {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6, 'ncpm1':7, 'ncpm2p5': 8}
 
+        # -------------Keep as original paper-------------
         config['hyper'] = {'lr': 0.001, 'decay': 0.0, 'pre': 0, 'interval': 10,'aux_loss_weight': 0.01}
 
-        config['heads'] =  {'nn_length': 3, 'nn_hidden_dim': 64, 'dropout_rate': 0.1},
+
+
 
         # §§ slurm command: squeue
         while True:

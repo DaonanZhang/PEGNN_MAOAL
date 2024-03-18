@@ -25,9 +25,6 @@ class IntpDataset(Dataset):
         self.time_fold = settings['fold']
         self.holdout = settings['holdout']
 
-        # only in windows to control the thread number
-        self.thread_num = 8
-
         self.mask_distance = mask_distance
 
         # set lowest_rank in order to generate the k-nearest neighbors?
@@ -39,10 +36,12 @@ class IntpDataset(Dataset):
         # load norm info, std, mean
         with open(self.origin_path + f'Folds_Info/norm_{self.time_fold}.info', 'rb') as f:
             self.dic_op_minmax, self.dic_op_meanstd = pickle.load(f)
+        f.close()
 
         # Generate call_scene_list from 'divide_set_{self.time_fold}.info', then generate call_list from call_scene_list
         with open(self.origin_path + f'Folds_Info/divide_set_{self.time_fold}.info', 'rb') as f:
             divide_set = pickle.load(f)
+        f.close()
 
         if call_name == 'train':
             # for training set, call_list is same as call_scene_list, because call item will be chosen randomly
@@ -56,7 +55,7 @@ class IntpDataset(Dataset):
             # do normalization in the parallel fashion
             # drop bad quality and normalize
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
                 # return filename, df in the process_child function
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
                 for future in concurrent.futures.as_completed(futures):
@@ -87,7 +86,7 @@ class IntpDataset(Dataset):
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
                 for future in concurrent.futures.as_completed(futures):
                     file_name, file_content = future.result()
@@ -114,7 +113,7 @@ class IntpDataset(Dataset):
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
 
                 # each time when a thread/process is done, it would be immediately return as future in the loop
@@ -144,7 +143,7 @@ class IntpDataset(Dataset):
             # do normalization in the parallel fashion
             # drop bad quality and normalize
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as executor:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
                 # return filename, df in the process_child function
                 futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
                 for future in concurrent.futures.as_completed(futures):
@@ -189,13 +188,25 @@ class IntpDataset(Dataset):
     #   - read the csv file
     #  - drop all bad quality readings
     def process_child(self, filename):
-        df = pd.read_csv(self.origin_path + 'Dataset_Separation/' + filename, sep=';')
-        # drop everything in bad quality
-        # loweset_rank = quality level of the sensor
-        df = df[df['Thing'] >= self.lowest_rank]
-        # normalize all values (coordinates will be normalized later)
-        df = self.norm(d=df)
+        file_path = self.origin_path + 'Dataset_Separation/' + filename
+        with open(file_path, 'r') as file:
+            df = pd.read_csv(file, sep=';')
+            # drop everything in bad quality
+            # loweset_rank = quality level of the sensor
+            df = df[df['Thing'] >= self.lowest_rank]
+            # normalize all values (coordinates will be normalized later)
+            df = self.norm(d=df)
+        file.close()
         return filename, df
+
+    # def process_child(self, filename):
+    #     df = pd.read_csv(self.origin_path + 'Dataset_Separation/' + filename, sep=';')
+    #     # drop everything in bad quality
+    #     # loweset_rank = quality level of the sensor
+    #     df = df[df['Thing'] >= self.lowest_rank]
+    #     # normalize all values (coordinates will be normalized later)
+    #     df = self.norm(d=df)
+    #     return filename, df
 
     # normalize all values and the thing
     def norm(self, d):
@@ -397,7 +408,8 @@ class IntpDataset(Dataset):
                         aux_answers[op_index][features_df_index] = assigned_value
                     else:
                         # choose -1 as our Masked value
-                        assigned_value = -1
+                        mask_value = -float('inf')
+                        assigned_value = mask_value
                         aux_answers[op_index][features_df_index] = assigned_value
 
                     # print(f'{features_df_index} / {len(graph_candidates)}')
