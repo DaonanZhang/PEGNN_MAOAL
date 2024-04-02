@@ -311,6 +311,9 @@ def training(settings, job_id):
             for p, g in zip(shared_parameters, common_grads):
                 p.grad = g
 
+
+            # TODO plot grad flow
+            
             optimizer.step()
             del common_grads
 
