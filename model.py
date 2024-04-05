@@ -235,8 +235,6 @@ class MultiLayerFeedForwardNN(nn.Module):
                                                    skip_connection=False,
                                                    context_str=self.context_str))
 
-
-
     def forward(self, input_tensor):
         '''
         Args:
@@ -265,8 +263,8 @@ class SpatialEncoder(nn.Module):
     def __init__(self, spa_embed_dim, coord_dim=2, settings=None, ffn=None):
         """
         Args:
-            spa_embed_dim: the output spatial relation embedding dimention
-            coord_dim: the dimention of space
+            spa_embed_dim: the output spatial relation embedding dimension
+            coord_dim: the dimension of space
         """
         super(SpatialEncoder, self).__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -284,7 +282,6 @@ class SpatialEncoder(nn.Module):
                                                hidden_dim=settings['nn_hidden_dim'],
                                                dropout_rate=settings['dropout_rate'])
 
-
     def forward(self, coords):
         """
         Given a list of coords (deltaX, deltaY), give their spatial relation embedding
@@ -301,6 +298,7 @@ class SpatialEncoder(nn.Module):
             return spr_embeds
 
 
+# -------------------------Transformer Encoder-------------------------
 class Transformer_Encoder(nn.Module):
     def __init__(self, settings):
         super(Transformer_Encoder, self).__init__()
@@ -320,16 +318,14 @@ class Transformer_Encoder(nn.Module):
         x = self.transformer_encoder(x)
         return x
 
-
 class PEGCN(nn.Module):
-
     """
         GCN with positional encoder and auxiliary tasks
     """
 
     # default parameters
-    def __init__(self, num_features_in=3, num_features_out=1, emb_hidden_dim=128, emb_dim=16, k=20, conv_dim=64,
-                 aux_task_num = 0, settings=None):
+    def __init__(self, num_features_in=2, num_features_out=1, emb_hidden_dim=128, emb_dim=16, k=20, conv_dim=64,
+                 aux_task_num=0, settings=None):
         super(PEGCN, self).__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.num_features_in = num_features_in
@@ -338,14 +334,17 @@ class PEGCN(nn.Module):
         self.k = k
         self.nn_length = settings['nn_length']
         self.nn_hidden_dim = settings['nn_hidden_dim']
-        self.aux_task_num = settings['aux_task_num']
+        # 3 aux_task -> 4 task heads (target_head included)
+        self.aux_task_num = aux_task_num
 
+        # x -> emb_hidden_dim
         self.spenc = SpatialEncoder(
             spa_embed_dim=emb_hidden_dim, ffn=True, settings=settings
         )
 
+        # embed_hidden_dim -> emb_dim
         # decrease the dimension of the embedding
-        self.dec = nn.Sequential(
+        self.spdec = nn.Sequential(
             nn.Linear(emb_hidden_dim, emb_hidden_dim // 2),
             nn.Tanh(),
             nn.Linear(emb_hidden_dim // 2, emb_hidden_dim // 4),
@@ -357,19 +356,15 @@ class PEGCN(nn.Module):
         # self.inc_transformer = nn.Linear(12, settings['d_model'])
         # 13 = 12 features for rest features and 1 for Q
 
-        # self.transformer_inc = nn.Linear(in_features=12, out_features=settings['d_model'])
-        # encoder_layers = TransformerEncoderLayer(settings['d_model'], settings['nhead'],
-        #                                               settings['dim_feedforward'], settings['transformer_dropout'], batch_first=True)
-        # self.transformer_encoder = TransformerEncoder(encoder_layers, settings['num_encoder_layers'])
+        # -----------------Transformer Encoder-----------------
 
         self.transformer_encoder = Transformer_Encoder(settings)
-
         self.transformer_mlp = MultiLayerFeedForwardNN(input_dim=1, output_dim=1,
                                                        num_hidden_layers=2,
                                                        hidden_dim=settings['nn_hidden_dim'],
                                                        dropout_rate=settings['dropout_rate'],)
 
-        # x_l + emb_l + q_l
+        # x_l + sp_enc_l
         self.conv1 = GCNConv(num_features_in + emb_dim + 1, conv_dim)
         self.conv2 = GCNConv(conv_dim, conv_dim)
 
@@ -378,32 +373,26 @@ class PEGCN(nn.Module):
 
         self.task_heads = nn.ModuleList()
 
+        # target_head also included in the task_heads
         for i in range(0, aux_task_num + 1):
             head = MultiLayerFeedForwardNN(input_dim=conv_dim, output_dim=num_features_out,
-                                    num_hidden_layers=settings['heads']['nn_length'],
-                                    hidden_dim=settings['heads']['nn_hidden_dim'],
-                                    dropout_rate=settings['heads']['dropout_rate'],)
+                                           num_hidden_layers=settings['heads_nn_length'],
+                                           hidden_dim=settings['heads_nn_hidden_dim'],
+                                           dropout_rate=settings['heads_dropout_rate'], )
             self.task_heads.append(head)
-        #     already use kaiming_init by creating
-
         # self.noise_sigma = torch.nn.Parameter(torch.tensor([0.1, ], device=self.device))
+        # self.Q = None
 
-
-        self.Q = None
         # MTH
-
-        # init weights
-        for p in self.dec.parameters():
-            if p.dim() > 1:
-                torch.nn.init.kaiming_normal_(p)
+        # -------------------init weights---------
+        # MTH already initialized the weights
+        # ________conv________
         for p in self.conv1.parameters():
             if p.dim() > 1:
                 torch.nn.init.kaiming_normal_(p)
         for p in self.conv2.parameters():
             if p.dim() > 1:
                 torch.nn.init.kaiming_normal_(p)
-        # torch.nn.init.kaiming_normal_(self.fc.weight)
-        # torch.nn.init.kaiming_normal_(self.task_heads[0].weight)
 
     def forward(self, inputs, targets, aux_answers, coords, input_lengths, rest_features, head_only):
 
@@ -413,34 +402,31 @@ class PEGCN(nn.Module):
         # input_lenths.shape: torch.Size([32])
         # batch_size
 
-        # rest_features.shape = torch.Size([32, 187, 12])
+        # rest_features.shape = torch.Size([32, 187, 11])
         # self.Q.shape = torch.Size([32, 187, 1])
         # rest_feature_Q.shape = torch.Size([32, 187, 13])
 
         # ________________________________________postional encoding_______________________________________________________
         emb = self.spenc(coords)
         # decrease the dimension of the embedding to the emb_dim
-        emb = self.dec(emb)
+        emb = self.spdec(emb)
         # emb.shape: torch.Size([32, 47, 16])
         emb_l, indexer = padded_seq_to_vectors(emb, input_lengths)
         # emb_l.shape after padding: torch.Size([1376, 16])
-
-        # _________________________________________env_features_______________________________________________________
+        # _________________________________________Env_features_______________________________________________________
         self.Q = torch.nn.Parameter(torch.ones(rest_features.shape[0], rest_features.shape[1], 1, device=self.device))
         rest_feature_Q = torch.cat([self.Q, rest_features], dim=2)
         # rest_feature_Q.shape after concat: torch.Size([8, 175, 12])
-        # rest_feature_Q = self.transformer_inc(rest_feature_Q)
-
-        feature_emb = self.transformer_encoder(rest_feature_Q)
-        Q_feature_emb = feature_emb[:,:, 0]
+        # _________________________________________Transformer_______________________________________________________
+        rest_feature_Q = self.transformer_encoder(rest_feature_Q)
+        Q_feature_emb = rest_feature_Q[:,:, 0]
         Q_feature_emb = Q_feature_emb.unsqueeze(-1)
-
         Q_feature_emb = self.transformer_mlp(Q_feature_emb)
-
-        # Q_feature_emb.shape = torch.Size([32, 212, 1])
+        # _______________________________________________________
         q_l, _ = padded_seq_to_vectors(Q_feature_emb, input_lengths)
-        # rest_featrues_l.shapetorch.Size([1509, 1])
-        # _________________________________________features_______________________________________________________
+        # q_l.shape = torch.Size([1509, 1])
+
+        # _________________________________________target_features_______________________________________________________
         x_l, _ = padded_seq_to_vectors(inputs, input_lengths)
         # x_l_shape = torch.Size([1376, 2])
 
@@ -448,7 +434,6 @@ class PEGCN(nn.Module):
             first_element = x_l[:, 0].unsqueeze(-1)
             last_element = x_l[:, -1].unsqueeze(-1)
             x_l = torch.cat([first_element, last_element], dim=-1)
-
         # _________________________________________Build map_______________________________________________________
         env_features = torch.concat((emb_l, q_l), dim = 1)
 
@@ -459,6 +444,7 @@ class PEGCN(nn.Module):
 
         # concat the embedding with the input
         x = torch.cat((x_l, env_features), dim=1)
+        # USING TRANSFORMER
         # => 19 = 2 x_l + 16 pe + 1 q_l
         # x.shape_ after concat: torch.Size([1509, 19])
 
@@ -470,25 +456,20 @@ class PEGCN(nn.Module):
 
         y_l, _ = padded_seq_to_vectors(targets, input_lengths)
         # y_l.shape after padding: torch.Size([1376, 1])
-
         # _____________________________________Aux_answers_____________________________________
-        # length = 3
         aux_y_ls = []
-        for i in range(0, self.aux_task_num):
-            aux_y_l, _ = padded_seq_to_vectors(aux_answers[i], input_lengths)
-            aux_y_ls.append(aux_y_l)
-
+        if self.aux_task_num >= 1:
+            for i in range(0, self.aux_task_num):
+                aux_y_l, _ = padded_seq_to_vectors(aux_answers[i], input_lengths)
+                aux_y_ls.append(aux_y_l)
             # aux_y_l.shape: torch.Size([398, 1])
-
         # _____________________________________Aux_outputs_____________________________________
-        # length = 3
         aux_outputs = []
-
         # task_head[0] only for primary task
-        for i in range(1, self.aux_task_num + 1):
-            aux_output = self.task_heads[i](h2)
-            aux_outputs.append(aux_output)
-
+        if self.aux_task_num >= 1:
+            for i in range(1, self.aux_task_num + 1):
+                aux_output = self.task_heads[i](h2)
+                aux_outputs.append(aux_output)
 
         # the result of output and y_l, in order to compare the BMC bzw. lost function
         # return loss now
@@ -504,15 +485,8 @@ class PEGCN(nn.Module):
             else:
                 aux_output_head = [extract_first_element_per_batch(aux_output, indexer) for aux_output in aux_outputs]
                 aux_target_head = [extract_first_element_per_batch(aux_y_l, indexer) for aux_y_l in aux_y_ls]
-
-
-            # print('output_head.shape:', output_head.shape)
-            # print('target_head.shape:', target_head.shape)
-            # print('aux_output_head.shape:', aux_output_head[0].shape)
-            # print('aux_target_head.shape:', aux_target_head[0].shape)
-
             return output_head, target_head, aux_output_head, aux_target_head
-    #
+
     # #     calculate the loss
     # def bmc_loss(self, pred, target):
     #     """Compute the Balanced MSE Loss (BMC) between `pred` and the ground truth `targets`.

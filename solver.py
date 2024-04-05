@@ -3,8 +3,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import sys
-from spatial_utils import MaskedMSELoss
+from spatial_utils import MaskedMAELoss
 import psutil
+from sklearn.metrics import r2_score
 
 # in the slurm file
 # sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/Datasets')
@@ -33,12 +34,11 @@ sys.path.append('/pfs/data5/home/kit/tm/lm6999/GPR_INTP_SAQN/util')
 import support_functions
 
 
-
 def map_param_to_block(shared_params):
     param_to_block = {}
 
     for i, (name, param) in enumerate(shared_params):
-        if 'spenc' or 'dec' in name:
+        if 'sp' in name:
             param_to_block[i] = 0
         elif 'transformer' in name:
             param_to_block[i] = 1
@@ -48,6 +48,7 @@ def map_param_to_block(shared_params):
             param_to_block[i] = 3
     module_num = 4
     return param_to_block, module_num
+
 
 class hypermodel(nn.Module):
     def __init__(self, task_num, module_num, param_to_block):
@@ -72,9 +73,9 @@ class hypermodel(nn.Module):
             return grads
         else:
             # main target loss and grad
-
             grads = torch.autograd.grad(loss_vector[0], shared_params, create_graph=True)
             loss_num = len(loss_vector)
+
             for task_id in range(1, loss_num):
                 try:
                     loss_value = loss_vector[task_id].item()
@@ -88,7 +89,8 @@ class hypermodel(nn.Module):
                         # tupel with len: len(grads, aux_grads)
                         # g:grads, g_aux:aux_grads, m:index in zip()--len(grads)
                         grads = tuple((g + self.scale_factor * self.nonlinear(
-                            self.modularized_lr[task_id - 1][self.param_to_block[m]]) * g_aux) * train_lr for m, (g, g_aux)
+                            self.modularized_lr[task_id - 1][self.param_to_block[m]]) * g_aux) * train_lr for
+                                      m, (g, g_aux)
                                       in enumerate(zip(grads, aux_grads)))
                     else:
                         grads = tuple((g + self.scale_factor * self.modularized_lr[task_id - 1][
@@ -100,6 +102,7 @@ class hypermodel(nn.Module):
                     sys.exit()
             return grads
 
+
 def bmc_loss(pred, target, noise_var, device):
     """Compute the Balanced MSE Loss (BMC) between `pred` and the ground truth `targets`.
     Args:
@@ -110,18 +113,16 @@ def bmc_loss(pred, target, noise_var, device):
       loss: A float tensor. Balanced MSE Loss.
     """
 
-    logits = - (pred - target.T).pow(2) / (2 * noise_var)   # logit size: [batch, batch]
-    loss = F.cross_entropy(logits, torch.arange(pred.shape[0]).to(device))     # contrastive-like loss
+    logits = - (pred - target.T).pow(2) / (2 * noise_var)  # logit size: [batch, batch]
+    loss = F.cross_entropy(logits, torch.arange(pred.shape[0]).to(device))  # contrastive-like loss
     # loss = loss * (2 * noise_var).detach()  # optional: restore the loss scale, 'detach' when noise is learnable 
     return loss
 
 
-
 from gauxlearn.optim import MetaOptimizer
 
+
 def training(settings, job_id):
-
-
     support_functions.seed_everything(settings['seed'])
 
     fold = settings['fold']
@@ -154,16 +155,20 @@ def training(settings, job_id):
 
     # build dataloader
     dataset_train = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
-    dataloader_tr = torch.utils.data.DataLoader(dataset_train, batch_size=settings['batch'], shuffle=True, collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32, drop_last=True)
+    dataloader_tr = torch.utils.data.DataLoader(dataset_train, batch_size=settings['batch'], shuffle=True,
+                                                collate_fn=dl.collate_fn, num_workers=settings['num_workers'],
+                                                prefetch_factor=32, drop_last=True)
 
     dataset_train2 = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='train')
     dataloader_tr2 = torch.utils.data.DataLoader(dataset_train2, batch_size=settings['batch'], shuffle=True,
-                                                collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32,
-                                                drop_last=True)
+                                                 collate_fn=dl.collate_fn, num_workers=settings['num_workers'],
+                                                 prefetch_factor=32,
+                                                 drop_last=True)
 
     aux_loader_train = dl.IntpDataset(settings=settings, mask_distance=-1, call_name='aux')
     aux_loader_tr = torch.utils.data.DataLoader(aux_loader_train, batch_size=settings['batch'], shuffle=True,
-                                                collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32,
+                                                collate_fn=dl.collate_fn, num_workers=settings['num_workers'],
+                                                prefetch_factor=32,
                                                 drop_last=True)
 
     test_dataloaders = []
@@ -171,34 +176,32 @@ def training(settings, job_id):
         test_dataloaders.append(
             torch.utils.data.DataLoader(
                 dl.IntpDataset(settings=settings, mask_distance=mask_distance, call_name='test'),
-                batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32, drop_last=True
+                batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn,
+                num_workers=settings['num_workers'], prefetch_factor=32, drop_last=True
             )
         )
 
     # build model
     model = PEGCN(num_features_in=settings['num_features_in'], num_features_out=settings['num_features_out'],
-                  emb_hidden_dim=settings['emb_hidden_dim'],emb_dim=settings['emb_dim'], k=settings['k'],
-                  conv_dim=settings['conv_dim'],aux_task_num=settings['aux_task_num'], settings=settings).to(device)
+                  emb_hidden_dim=settings['emb_hidden_dim'], emb_dim=settings['emb_dim'], k=settings['k'],
+                  conv_dim=settings['conv_dim'], aux_task_num=settings['aux_task_num'], settings=settings).to(device)
     model = model.float()
 
     # Added part MAOAL
     # build hypermodel
     shared_parameters = [param for name, param in model.named_parameters() if 'task' not in name]
-
-    shared_parameters1 = [(name,param) for name, param in model.named_parameters() if 'task' not in name]
+    shared_parameters1 = [(name, param) for name, param in model.named_parameters() if 'task' not in name]
 
     for name, param in shared_parameters1:
         print(f'name: {name}, param: {param.shape}')
-
 
     param_to_block, module_num = map_param_to_block(shared_parameters1)
 
     modular = hypermodel(settings['aux_task_num'], module_num, param_to_block).to(device)
 
-
     # loss_func = torch.nn.MSELoss()
 
-    loss_func = MaskedMSELoss()
+    loss_func = MaskedMAELoss()
 
     if ngpu > 1:
         model = torch.nn.DataParallel(model, device_ids=device_list)
@@ -206,14 +209,15 @@ def training(settings, job_id):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=settings['nn_lr'])
 
-    m_optimizer = optim.SGD( modular.parameters(), lr = settings['hyper']['lr'], momentum = 0.9, weight_decay = settings['hyper']['decay'] )
-    meta_optimizer = MetaOptimizer(meta_optimizer= m_optimizer, hpo_lr = 1.0, truncate_iter = 3, max_grad_norm = 10)
+    m_optimizer = optim.SGD(modular.parameters(), lr=settings['hyper_lr'], momentum=0.9,
+                            weight_decay=settings['hyper_decay'])
+    meta_optimizer = MetaOptimizer(meta_optimizer=m_optimizer, hpo_lr=1.0, truncate_iter=3, max_grad_norm=10)
     modular = modular.to(device)
 
     # set training loop
     epochs = settings['epoch']
     batch_size = settings['batch']
-    print("\nTraining to %d epochs (%d of test batch size)" %(epochs, batch_size))
+    print("\nTraining to %d epochs (%d of test batch size)" % (epochs, batch_size))
 
     # fire training loop
     start_time = time.time()
@@ -241,13 +245,11 @@ def training(settings, job_id):
 
     t_train_iter_start = time.time()
 
-
     print("working on training loop")
 
     for i in range(epochs):
-        # train 1 iteration
         model.train()
-        real_iter = iter_counter//settings['accumulation_steps'] + 1
+        real_iter = iter_counter // settings['accumulation_steps'] + 1
 
         try:
             batch = next(data_iter)
@@ -257,28 +259,26 @@ def training(settings, job_id):
 
         x_b, c_b, y_b, aux_y_b, input_lengths, rest_features = batch
 
-        x_b, c_b, y_b, input_lengths, rest_features = x_b.to(device), c_b.to(device), \
-                                                               y_b.to(device), \
-                                                               input_lengths.to(device), \
-                                                               rest_features.to(device)
+        x_b, c_b, y_b, input_lengths, rest_features = x_b.to(device), c_b.to(device), y_b.to(device), input_lengths.to(device), rest_features.to(device)
 
         aux_y_b = [item.to(device) for item in aux_y_b]
 
         # forward propagation
-        outputs_b, targets_b, aux_outputs_b, aux_targets_b = model(inputs = x_b, targets = y_b, coords = c_b, input_lengths = input_lengths,
-                                     rest_features = rest_features, head_only= True, aux_answers = aux_y_b)
+        outputs_b, targets_b, aux_outputs_b, aux_targets_b = model(inputs=x_b, targets=y_b, coords=c_b,
+                                                                   input_lengths=input_lengths,
+                                                                   rest_features=rest_features, head_only=True,
+                                                                   aux_answers=aux_y_b)
 
-        # print(f'outputs_b:{outputs_b.shape}')
-        # print(f'targets_b:{targets_b.shape}')
+        print(f'outputs_b:{outputs_b.shape}')
+        print(f'targets_b:{targets_b.shape}')
         # outputs_b: torch.Size([32, 1])
         # targets_b: torch.Size([32, 1])
 
-        # for i in range(3):
-        #     print(f'aux_outputs_b:{outputs_b[i].shape}')
-        #     print(f'aux_targets_b:{targets_b[i].shape}')
-
+        print(f'aux_outputs_b:{outputs_b[0].shape}')
+        print(f'aux_targets_b:{targets_b[0].shape}')
         # 0: aux_outputs_b:torch.Size([1])
         # 0: aux_targets_b:torch.Size([1])
+        # # -----------------target_loss-----------------
         primary_loss = loss_func(outputs_b, targets_b)
         primary_loss /= settings['accumulation_steps']
 
@@ -289,34 +289,37 @@ def training(settings, job_id):
         aux_loss_list = []
         for aux_output, aux_target in zip(aux_outputs_b, aux_targets_b):
             aux_loss = loss_func(aux_output, aux_target)
-            aux_loss_list.append((aux_loss * settings['hyper']['aux_loss_weight'] / settings['accumulation_steps']))
+            aux_loss_list.append((aux_loss * settings['hyper_aux_loss_weight'] / settings['accumulation_steps']))
 
-        for i in range(0 ,settings['aux_task_num']):
+        for i in range(0, settings['aux_task_num']):
             # aux_iter_loss[i] += aux_loss_list[i].item()
             # aux_mini_loss[i] += aux_loss_list[i].item()
             aux_iter_loss[i] += aux_loss_list[i]
             aux_mini_loss[i] += aux_loss_list[i]
 
         # -----------------a full_batch, opt.step optimize the shared parameters only-----------------
-        if (iter_counter+1) % settings['accumulation_steps'] == 0:
+        if (iter_counter + 1) % settings['accumulation_steps'] == 0:
 
             # -----------------MAOAL-----------------
             loss_list = [mini_loss] + aux_mini_loss
             common_grads = modular(loss_list, shared_parameters, whether_single=0, train_lr=1.0)
             loss_vec = torch.stack(loss_list)
             total_loss = torch.sum(loss_vec)
+
             optimizer.zero_grad()
             total_loss.backward()
 
             for p, g in zip(shared_parameters, common_grads):
                 p.grad = g
-
             optimizer.step()
+
             del common_grads
 
             # -----------------log-----------------
             t_train_iter_end = time.time()
-            print(f'\tIter {real_iter} - Loss: {mini_loss.item()} Aux_loss:{[loss.item() for loss in aux_mini_loss]} - real_iter_time: {t_train_iter_end - t_train_iter_start}', end="\r", flush=True)
+            print(
+                f'\tIter {real_iter} - Loss: {mini_loss.item()} Aux_loss:{[loss.item() for loss in aux_mini_loss]} - real_iter_time: {t_train_iter_end - t_train_iter_start}',
+                end="\r", flush=True)
 
             # -----------------reset-----------------
             mini_loss = torch.tensor(0., device=device)
@@ -324,7 +327,7 @@ def training(settings, job_id):
             t_train_iter_start = t_train_iter_end
 
             # -----------------optimize the Hyper Parameters-----------------
-        if (real_iter) % settings['hyper']['interval'] == 0 and real_iter > settings['hyper']['pre']:
+        if (real_iter + 1) % settings['hyper_interval'] == 0 and real_iter > settings['hyper_pre']:
 
             try:
                 aux_batch = next(aux_iter)
@@ -341,10 +344,7 @@ def training(settings, job_id):
             # ----------------------------meta_loss----------------------------
             meta_x_b, meta_c_b, meta_y_b, meta_aux_y_b, meta_input_lengths, meta_rest_features = aux_batch
             meta_x_b, meta_c_b, meta_y_b, meta_input_lengths, meta_rest_features = meta_x_b.to(device), meta_c_b.to(
-                device), meta_y_b.to(device), \
-                                                                                   meta_input_lengths.to(
-                                                                                       device), meta_rest_features.to(
-                device)
+                device), meta_y_b.to(device), meta_input_lengths.to(device), meta_rest_features.to(device)
 
             meta_aux_y_b = [item.to(device) for item in meta_aux_y_b]
 
@@ -362,10 +362,7 @@ def training(settings, job_id):
             train_x_b, train_c_b, train_y_b, train_aux_y_b, train_input_lengths, train_rest_features = train_batch2
 
             train_x_b, train_c_b, train_y_b, train_input_lengths, train_rest_features = train_x_b.to(
-                device), train_c_b.to(device), \
-                                                                                        train_y_b.to(device), \
-                                                                                        train_input_lengths.to(device), \
-                                                                                        train_rest_features.to(device)
+                device), train_c_b.to(device), train_y_b.to(device), train_input_lengths.to(device),train_rest_features.to(device)
 
             train_aux_y_b = [item.to(device) for item in train_aux_y_b]
 
@@ -383,7 +380,7 @@ def training(settings, job_id):
             aux_loss_list = []
             for aux_output, aux_target in zip(aux_outputs_b, aux_targets_b):
                 aux_loss = loss_func(aux_output, aux_target)
-                aux_loss_list.append(aux_loss * settings['hyper']['aux_loss_weight'] / settings['accumulation_steps'])
+                aux_loss_list.append(aux_loss * settings['hyper_aux_loss_weight'] / settings['accumulation_steps'])
 
             loss_list = [primary_loss] + aux_loss_list
             train_common_grads = modular(loss_list, shared_parameters, whether_single=0, train_lr=1.0)
@@ -397,11 +394,8 @@ def training(settings, job_id):
 
         iter_counter += 1
 
-
-        # -----------------test batch-----------------
-        print((iter_counter+1) % (settings['test_batch'] * settings['accumulation_steps']))
         # only log for after finish a full_batch
-        if (iter_counter+1) % (settings['test_batch'] * settings['accumulation_steps']) == 0:
+        if (iter_counter + 1) % (settings['test_batch'] * settings['accumulation_steps']) == 0:
             model.eval()
             output_list = []
             target_list = []
@@ -410,11 +404,6 @@ def training(settings, job_id):
             for dataloader_ex in test_dataloaders:
 
                 for test_batch in dataloader_ex:
-
-                    num_open_files_in_test = psutil.Process().num_fds()
-                    print(f"current open files {num_open_files_in_test} in test")
-                    sleep_for_open_too_many_files()
-
                     x_b, c_b, y_b, aux_y_b, input_lengths, rest_features = test_batch
 
                     x_b, c_b, y_b, input_lengths, rest_features = x_b.to(device), c_b.to(device), y_b.to(
@@ -423,17 +412,16 @@ def training(settings, job_id):
                     aux_y_b = [item.to(device) for item in aux_y_b]
 
                     outputs_b, targets_b, _, _ = model(inputs=x_b, targets=y_b, coords=c_b,
-                                                                       input_lengths=input_lengths,
-                                                                       rest_features=rest_features, head_only=True,
-                                                                       aux_answers=aux_y_b)
+                                                       input_lengths=input_lengths,
+                                                       rest_features=rest_features, head_only=True,
+                                                       aux_answers=aux_y_b)
                     output_list.append(outputs_b)
                     target_list.append(targets_b)
 
             output = torch.cat(output_list)
             target = torch.cat(target_list)
-            # ___________________reset_______________________
-            test_loss = torch.nn.MSELoss(reduction='sum')(output, target)
 
+            test_loss = torch.nn.L1Loss()(output, target)
             output = output.squeeze().detach().cpu()
             target = target.squeeze().detach().cpu()
 
@@ -443,17 +431,19 @@ def training(settings, job_id):
             test_means_origin = output * (max_val - min_val) + min_val
             test_y_origin = target * (max_val - min_val) + min_val
 
-            mae = mean_squared_error(test_y_origin, test_means_origin, squared=False)
-            r_squared = stats.pearsonr(test_y_origin, test_means_origin)
+            # ---------------original r2 and mae-----------------
+            r_squared = r2_score(test_y_origin, test_means_origin)
+            mae = nn.L1Loss()(test_y_origin, test_means_origin)
+
             print(f'\t\t--------\n\t\tIter: {str(real_iter)}, inter_train_loss: {inter_loss}\n\t\t--------\n')
             print(f'\t\t--------\n\t\ttest_loss: {str(test_loss.item())}, last best test_loss: {str(best_err)}\n\t\t--------\n')
-            print(f'\t\t--------\n\t\tr_squared: {str(r_squared[0])}, MSE: {str(mae)}\n\t\t--------\n')
+            print(f'\t\t--------\n\t\tr_squared: {str(r_squared)}, MSE: {str(mae)}\n\t\t--------\n')
 
             list_err.append(float(test_loss.item()))
             list_total.append(float(inter_loss.item()))
             inter_loss = torch.tensor(0., device=device)
 
-            title = f'Fold{fold}_holdout{holdout}_Md_all: MSE {round(mae, 2)} R2 {round(r_squared[0], 2)}'
+            title = f'Fold{fold}_holdout{holdout}_Md_all: MSE {round(mae, 2)} R2 {round(r_squared, 2)}'
 
             support_functions.save_square_img(
                 contents=[test_y_origin.numpy(), test_means_origin.numpy()],
@@ -461,7 +451,6 @@ def training(settings, job_id):
                 savename=os.path.join(coffer_slot, f'test_{real_iter}'),
                 title=title
             )
-
 
             if best_err - test_loss > settings['es_mindelta']:
                 best_err = test_loss
@@ -480,16 +469,9 @@ def training(settings, job_id):
             break
 
     elapsed_time = time.time() - start_time
-    print("Elapsed: "+str(elapsed_time))
+    print("Elapsed: " + str(elapsed_time))
 
     return list_total, list_err
-
-def sleep_for_open_too_many_files():
-    while True:
-            num_open_files = psutil.Process().num_fds()
-            if num_open_files < 300:
-                break
-            time.sleep(10)
 
 
 # to evaluate the result of training
@@ -498,7 +480,7 @@ def evaluate(settings, job_id):
     fold = settings['fold']
     holdout = settings['holdout']
     lowest_rank = settings['lowest_rank']
-    
+
     coffer_dir = ''
     dirs = os.listdir(myconfig.coffer_path)
     dirs.sort()
@@ -507,9 +489,8 @@ def evaluate(settings, job_id):
             coffer_dir = myconfig.coffer_path + dir + f'/{fold}/'
             break
 
-
     # Get device setting
-    if not torch.cuda.is_available(): 
+    if not torch.cuda.is_available():
         device = torch.device("cpu")
         ngpu = 0
         print(f'Working on CPU')
@@ -521,22 +502,22 @@ def evaluate(settings, job_id):
             print(f'Working on multi-GPU {device_list}')
         else:
             print(f'Working on single-GPU')
-            
+
     # get standarization restore info
     with open(settings['origin_path'] + f'Folds_Info/norm_{fold}.info', 'rb') as f:
         dic_op_minmax, dic_op_meanstd = pickle.load(f)
-        
+
     # build model
     model = PEGCN(num_features_in=settings['num_features_in'], num_features_out=settings['num_features_out'],
                   emb_hidden_dim=settings['emb_hidden_dim'], emb_dim=settings['emb_dim'], k=settings['k'],
-                  conv_dim=settings['conv_dim'], aux_task_num= 0, settings=settings).to(device)
+                  conv_dim=settings['conv_dim'], aux_task_num=0, settings=settings).to(device)
 
     model = model.float()
-    
+
     if ngpu > 1:
         model = torch.nn.DataParallel(model, device_ids=device_list)
 
-    model.load_state_dict(torch.load(coffer_dir + "best_params"))
+    model.load_state_dict(torch.load(coffer_dir + "best_params"), strict=False)
 
 
     # build dataloader
@@ -546,7 +527,9 @@ def evaluate(settings, job_id):
     for mask_distance in [0, 20, 50]:
         dataset_eval = dl.IntpDataset(settings=settings, mask_distance=mask_distance, call_name='eval')
 
-        dataloader_ev = torch.utils.data.DataLoader(dataset_eval, batch_size=settings['batch'], shuffle=False, collate_fn=dl.collate_fn, num_workers = settings['num_workers'], prefetch_factor=32, drop_last=True)
+        dataloader_ev = torch.utils.data.DataLoader(dataset_eval, batch_size=settings['batch'], shuffle=False,
+                                                    collate_fn=dl.collate_fn, num_workers=settings['num_workers'],
+                                                    prefetch_factor=32, drop_last=True)
 
         # Eval batch, where the print comes from
         model.eval()
@@ -560,13 +543,13 @@ def evaluate(settings, job_id):
 
             # forward propagation
             outputs_b, targets_b, _, _ = model(inputs=x_b, targets=y_b, coords=c_b,
-                                                                       input_lengths=input_lengths,
-                                                                       rest_features=rest_features, head_only=True,
-                                                                       aux_answers=aux_y_b)
+                                               input_lengths=input_lengths,
+                                               rest_features=rest_features, head_only=True,
+                                               aux_answers=aux_y_b)
 
             output_list.append(outputs_b.detach().cpu())
             target_list.append(targets_b.detach().cpu())
-                    
+
         output = torch.cat(output_list).squeeze()
         target = torch.cat(target_list).squeeze()
 
@@ -577,19 +560,21 @@ def evaluate(settings, job_id):
         test_y_origin = target * (max_val - min_val) + min_val
 
         # -----------------Mean Absolute Error-----------------
-        mae = mean_squared_error(test_y_origin, test_means_origin, squared=False)
-        r_squared = stats.pearsonr(test_y_origin, test_means_origin)
+        mae = nn.L1Loss()(test_y_origin, test_means_origin)
+        # r_squared = stats.pearsonr(test_y_origin, test_means_origin)
+        r_squared = r2_score(test_y_origin, test_means_origin)
 
         rtn_mae_list.append(float(mae))
-        rtn_rsq_list.append(float(r_squared[0]))
+        rtn_rsq_list.append(float(r_squared))
 
-        print(f'\t\t--------\n\t\tr_squared: {str(r_squared[0])}, MSE: {str(mae)}\n\t\t--------\n')
-        print(f'\t\t--------\n\t\tDiffer: {test_means_origin.max() - test_means_origin.min()}, count: {test_y_origin.size(0)}\n\t\t--------\n')
+        print(f'\t\t--------\n\t\tr_squared: {str(r_squared)}, MSE: {str(mae)}\n\t\t--------\n')
+        print(
+            f'\t\t--------\n\t\tDiffer: {test_means_origin.max() - test_means_origin.min()}, count: {test_y_origin.size(0)}\n\t\t--------\n')
 
-        title = f'Fold{fold}_holdout{holdout}_Md{mask_distance}: MSE {round(mae, 2)} R2 {round(r_squared[0], 2)}'
+        title = f'Fold{fold}_holdout{holdout}_Md{mask_distance}: MSE {round(mae, 2)} R2 {round(r_squared, 2)}'
         support_functions.save_square_img(
-            contents=[test_y_origin.numpy(), test_means_origin.numpy()], 
-            xlabel='targets_ex', ylabel='output_ex', 
+            contents=[test_y_origin.numpy(), test_means_origin.numpy()],
+            xlabel='targets_ex', ylabel='output_ex',
             savename=os.path.join(coffer_dir, f'result_{mask_distance}'),
             title=title
         )

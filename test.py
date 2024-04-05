@@ -1,3 +1,4 @@
+
 import os
 import sys
 
@@ -67,12 +68,12 @@ if __name__ == '__main__':
         'origin_path': 'Dataset_res250/',
 
         # debug mode=>data_set
-        'debug': True,
+        'debug': False,
         'bp': False,
 
-        'batch': 8,
-        'full_batch': 32,
-        'accumulation_steps': 32 // 8,
+        'batch': 16,
+        'full_batch': 128,
+        'accumulation_steps': 128 // 16,
 
         'nn_lr': 1e-5,
         'emb_dim': 16,
@@ -86,7 +87,6 @@ if __name__ == '__main__':
         'es_endure': 10,
 
         'num_features_in': 2,
-
         'num_features_out': 1,
 
         'seed': 1,
@@ -100,26 +100,32 @@ if __name__ == '__main__':
         'nn_hidden_dim': 32,
         'dropout_rate': 0.1,
 
-        # for transformer
-        'd_model': 256,
-        'nhead': 4,
-        'dim_feedforward': 1024,
-        'transformer_dropout': 0.1,
-        'num_encoder_layers': 3,
-        'num_MPL': 3,
+        'aux_task_num': 1,
 
-        'aux_task_num': 3,
-
-        'aux_op_dic': {'mcpm1': 0, 'mcpm2p5': 1, 'mcpm4': 2},
+        'aux_op_dic': {'mcpm4': 0},
 
         'env_op_dic': {'ta': 0, 'hur': 1, 'plev': 2, 'precip': 3, 'wsx': 4, 'wsy': 5, 'globalrad': 6},
 
         'hyper': {'lr': 0.001, 'decay': 0.0, 'pre': -1, 'interval': 10,'aux_loss_weight': 0.01},
 
-        'heads': {'nn_length': 3, 'nn_hidden_dim': 64, 'dropout_rate': 0.1},
+        'hyper_lr': 1e-6,
+        'hyper_decay': 0.0,
+        'hyper_pre': -1,
+        'hyper_interval': 10,
+        'hyper_aux_loss_weight': 0.05,
 
+        'heads_nn_length': 3,
+        'heads_nn_hidden_dim': 64,
+        'heads_dropout_rate': 0.1,
 
-        'num_workers': 16,
+        # for transformer
+        'd_model': 32,
+        'nhead': 4,
+        'dim_feedforward': 256,
+        'transformer_dropout': 0.1,
+        'num_encoder_layers': 3,
+
+        'num_workers': 4,
     }
 
     # build working folder
@@ -132,8 +138,6 @@ if __name__ == '__main__':
     build_folder_and_clean(coffer_slot)
 
     settings['coffer_slot'] = coffer_slot
-
-
 
     settings['tgt_op'] = 'mcpm10'
 

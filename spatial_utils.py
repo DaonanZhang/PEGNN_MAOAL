@@ -25,18 +25,17 @@ def makeEdgeWeight(x, edge_index):
     
     return edge_weight
 
-class MaskedMSELoss(nn.Module):
+class MaskedMAELoss(nn.Module):
     def __init__(self):
-        super(MaskedMSELoss, self).__init__()
+        super(MaskedMAELoss, self).__init__()
 
     def forward(self, pred, target):
         mask_value = -float('inf')
         mask = target != mask_value
-        masked_input = pred[mask]
         masked_target = target[mask]
 
-        if masked_input.numel() == 0 or masked_target.numel() == 0:
+        if masked_target.numel() == 0:
             return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
 
-        loss = F.mse_loss(masked_input, masked_target, reduction='mean')
-        return loss
+        L1_loss = nn.L1Loss()(pred, masked_target)
+        return L1_loss

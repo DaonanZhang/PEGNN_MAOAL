@@ -9,6 +9,9 @@ from torch.nn.utils.rnn import pad_sequence
 from osgeo import gdal
 import concurrent.futures
 
+import torch.multiprocessing as mp
+
+mp.set_sharing_strategy('file_system')
 
 def encode_and_bind(original_dataframe, feature_to_encode, possible_values):
     enc_df = original_dataframe.copy()
@@ -55,13 +58,17 @@ class IntpDataset(Dataset):
             # do normalization in the parallel fashion
             # drop bad quality and normalize
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # return filename, df in the process_child function
-                futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
-                for future in concurrent.futures.as_completed(futures):
-                    file_name, file_content = future.result()
-                    # save the result in file_content
-                    self.total_df_dict[file_name] = file_content
+            # with concurrent.futures.ThreadPoolExecutor() as executor:
+            #     # return filename, df in the process_child function
+            #     futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
+            #     for future in concurrent.futures.as_completed(futures):
+            #         file_name, file_content = future.result()
+            #         # save the result in file_content
+            #         self.total_df_dict[file_name] = file_content
+
+            for file_name in call_scene_list:
+                file_name, file_content = self.process_child(file_name)
+                self.total_df_dict[file_name] = file_content
 
             self.call_list = []
             for scene in call_scene_list:
@@ -86,11 +93,14 @@ class IntpDataset(Dataset):
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
-                for future in concurrent.futures.as_completed(futures):
-                    file_name, file_content = future.result()
-                    self.total_df_dict[file_name] = file_content
+            # with concurrent.futures.ThreadPoolExecutor() as executor:
+            #     futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
+            #     for future in concurrent.futures.as_completed(futures):
+            #         file_name, file_content = future.result()
+            #         self.total_df_dict[file_name] = file_content
+            for file_name in call_scene_list:
+                file_name, file_content = self.process_child(file_name)
+                self.total_df_dict[file_name] = file_content
 
             # fold_out
             stations = [0, 1, 2, 3]
@@ -113,13 +123,16 @@ class IntpDataset(Dataset):
 
             # do normalization in the parallel fashion
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
-
-                # each time when a thread/process is done, it would be immediately return as future in the loop
-                for future in concurrent.futures.as_completed(futures):
-                    file_name, file_content = future.result()
-                    self.total_df_dict[file_name] = file_content
+            # with concurrent.futures.ThreadPoolExecutor() as executor:
+            #     futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
+            #
+            #     # each time when a thread/process is done, it would be immediately return as future in the loop
+            #     for future in concurrent.futures.as_completed(futures):
+            #         file_name, file_content = future.result()
+            #         self.total_df_dict[file_name] = file_content
+            for file_name in call_scene_list:
+                file_name, file_content = self.process_child(file_name)
+                self.total_df_dict[file_name] = file_content
 
             # eval
             stations = []
@@ -143,13 +156,21 @@ class IntpDataset(Dataset):
             # do normalization in the parallel fashion
             # drop bad quality and normalize
             self.total_df_dict = {}
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # return filename, df in the process_child function
-                futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
-                for future in concurrent.futures.as_completed(futures):
-                    file_name, file_content = future.result()
-                    # save the result in file_content
-                    self.total_df_dict[file_name] = file_content
+            print(self.total_df_dict)
+
+            # with concurrent.futures.ThreadPoolExecutor() as executor:
+            #     # return filename, df in the process_child function
+            #     futures = [executor.submit(self.process_child, file_name) for file_name in call_scene_list]
+            #     for future in concurrent.futures.as_completed(futures):
+            #         file_name, file_content = future.result()
+            #         # save the result in file_content
+            #         self.total_df_dict[file_name] = file_content
+
+            for file_name in call_scene_list:
+                file_name, file_content = self.process_child(file_name)
+                self.total_df_dict[file_name] = file_content
+
+
 
             self.call_list = []
             for scene in call_scene_list:
@@ -196,7 +217,6 @@ class IntpDataset(Dataset):
             df = df[df['Thing'] >= self.lowest_rank]
             # normalize all values (coordinates will be normalized later)
             df = self.norm(d=df)
-        file.close()
         return filename, df
 
     # def process_child(self, filename):
@@ -235,7 +255,6 @@ class IntpDataset(Dataset):
 
     def __getitem__(self, idx):
 
-        # TODO: Debug
         pd.set_option('display.max_rows', None)
         pd.set_option('display.max_columns', None)
 
@@ -436,7 +455,6 @@ class IntpDataset(Dataset):
         # make one hot in int form
         df_one_hot *= 1
         env_features = torch.tensor(df_one_hot.values).float()
-
         return features, coords, answers, aux_answers, env_features
 
 
@@ -447,12 +465,13 @@ def collate_fn(examples):
     x_b = pad_sequence([ex[0] for ex in examples if len(ex[0]) > 2], batch_first=True, padding_value=0.0)
     c_b = pad_sequence([ex[1] for ex in examples if len(ex[1]) > 2], batch_first=True, padding_value=0.0)
     y_b = pad_sequence([ex[2] for ex in examples if len(ex[2]) > 2], batch_first=True, padding_value=0.0)
-    rest_feature = pad_sequence([ex[4] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
 
     task_num = len(examples[0][3])
     aux_y_b = []
     for i in range(0, task_num):
-        sequence = pad_sequence([ex[3][i] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=-1.0)
+        sequence = pad_sequence([ex[3][i] for ex in examples if len(ex[3]) > 2], batch_first=True, padding_value=0.0)
         aux_y_b.append(sequence.unsqueeze(-1))
+
+    rest_feature = pad_sequence([ex[4] for ex in examples if len(ex[4]) > 2], batch_first=True, padding_value=0.0)
 
     return x_b, c_b, y_b, aux_y_b, input_lenths, rest_feature

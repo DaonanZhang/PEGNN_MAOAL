@@ -33,7 +33,7 @@ coffer_path = './coffer/'
 entity_name = 'daonan_'
 
 # project name on wandb and HPC
-project_name = 'PEGNN_sweep_ber'
+project_name = 'PEGNN_MAOAL_3'
 # e-mail address to recieve notifications
 # e_mail = 'hpcdam.lcf@gmail.com'
 
@@ -61,9 +61,9 @@ train_script_name = 'Trainer.py'
 # define custom sweep hyperparameters
 #     - how many sweeps do you want to run in total
 # 243 combinations for total_sweep
-total_sweep = 54
+total_sweep = 1
 #     - how many sweeps do you want to run parallelly
-pool_size = 40
+pool_size = 1
 
 
 # define wandb sweep parameters
@@ -82,20 +82,10 @@ metric = {
 sweep_config['metric'] = metric
 #     - parameters search range definition
 parameters_dict = {
-    'full_batch': {
-        'values': [128, 256]
-    },
-    'lr': {
-        'values': [1e-4, 1e-5, 1e-6]
-    },
 
-    'emb_dim': {
-        'values': [16, 32, 64]
-    },
-
-    'conv_dim': {
-        'values': [128, 256, 512]
-    },
+    'heads_nn_length': {
+        'values': [3]
+    }
 
 }
 sweep_config['parameters'] = parameters_dict
